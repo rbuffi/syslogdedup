@@ -1,7 +1,7 @@
 """NSX-T Manager API client for IP-to-group lookups."""
 import logging
 import time
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 import requests
 from requests.auth import HTTPBasicAuth
 from config import NSXTConfig
@@ -27,9 +27,13 @@ class NSXTClient:
         self.session.auth = self.auth
         self.session.verify = config.verify_ssl
         
-        # Cache for IP-to-group mappings
+        # Per-IP cache for results
         self._ip_cache: Dict[str, Optional[List[str]]] = {}
         self._cache_timestamps: Dict[str, float] = {}
+
+        # Prefetched groups data (for batch/local lookup)
+        self._groups_last_refresh: float = 0.0
+        self._groups: List[Dict[str, Any]] = []
     
     def _get_cache_key(self, ip: str) -> str:
         """Generate cache key for IP address."""
@@ -54,6 +58,52 @@ class NSXTClient:
         cache_key = self._get_cache_key(ip)
         self._ip_cache[cache_key] = groups
         self._cache_timestamps[cache_key] = time.time()
+
+    # -------- Batch / precomputed group loading --------
+
+    def _refresh_groups_if_needed(self):
+        """
+        Refresh the in-memory list of NSX groups if cache_ttl has expired.
+
+        This precomputes group membership structures so lookups don't hit
+        the NSX API for every single IP.
+        """
+        now = time.time()
+        if self._groups and (now - self._groups_last_refresh) < self.config.cache_ttl:
+            return
+
+        try:
+            groups_url = f"{self.base_url}/policy/api/v1/infra/groups"
+            response = self.session.get(groups_url, timeout=15)
+            response.raise_for_status()
+            groups_data = response.json()
+
+            groups: List[Dict[str, Any]] = []
+
+            for group in groups_data.get("results", []):
+                group_id = group.get("id", "")
+                group_path = group.get("path", "")
+                if not group_id:
+                    continue
+
+                detail_url = f"{self.base_url}/policy/api/v1/infra/groups/{group_id}"
+                try:
+                    detail_resp = self.session.get(detail_url, timeout=15)
+                    detail_resp.raise_for_status()
+                    detail = detail_resp.json()
+                    detail["path"] = group_path  # ensure path is present
+                    groups.append(detail)
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Failed to get group detail for {group_id}: {e}")
+                    continue
+
+            self._groups = groups
+            self._groups_last_refresh = now
+            logger.info(f"Refreshed NSX groups cache, loaded {len(groups)} groups")
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to refresh NSX groups from NSX-T: {e}")
+            # don't blow up; leave existing groups in place if any
     
     def lookup_ip_groups(self, ip_address: str) -> Optional[List[str]]:
         """
@@ -65,49 +115,24 @@ class NSXTClient:
         Returns:
             List of group names (paths) that contain this IP, or None if lookup fails
         """
-        # Check cache first
+        # Check per-IP cache first
         cached = self._get_from_cache(ip_address)
         if cached is not None:
             return cached
         
-        try:
-            # Use the Policy API to find groups containing this IP
-            # First, get all groups
-            groups_url = f"{self.base_url}/policy/api/v1/infra/groups"
-            response = self.session.get(groups_url, timeout=10)
-            response.raise_for_status()
-            
-            groups_data = response.json()
-            matching_groups = []
-            
-            # Check each group for IP membership
-            for group in groups_data.get('results', []):
-                group_path = group.get('path', '')
-                group_id = group.get('id', '')
-                
-                # Get group details including membership criteria
-                group_detail_url = f"{self.base_url}/policy/api/v1/infra/groups/{group_id}"
-                try:
-                    detail_response = self.session.get(group_detail_url, timeout=10)
-                    detail_response.raise_for_status()
-                    group_detail = detail_response.json()
-                    
-                    # Check if IP matches any membership criteria
-                    if self._ip_matches_group(ip_address, group_detail):
-                        matching_groups.append(group_path)
-                except requests.exceptions.RequestException as e:
-                    logger.warning(f"Failed to get details for group {group_id}: {e}")
-                    continue
-            
-            # Store in cache (even if empty list)
-            self._store_in_cache(ip_address, matching_groups if matching_groups else [])
-            return matching_groups if matching_groups else []
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to lookup IP {ip_address} in NSX-T: {e}")
-            # Cache None to avoid repeated failed lookups
-            self._store_in_cache(ip_address, None)
-            return None
+        # Ensure we have a fresh in-memory group list
+        self._refresh_groups_if_needed()
+
+        matching_paths: List[str] = []
+        for group_detail in self._groups:
+            if self._ip_matches_group(ip_address, group_detail):
+                path = group_detail.get("path") or group_detail.get("display_name") or ""
+                if path:
+                    matching_paths.append(path)
+
+        # Store in cache (even if empty list) so repeated lookups are cheap
+        self._store_in_cache(ip_address, matching_paths if matching_paths else [])
+        return matching_paths
     
     def _ip_matches_group(self, ip: str, group_detail: dict) -> bool:
         """
