@@ -103,6 +103,8 @@ class NSXTClient:
             self._groups = groups
             self._groups_last_refresh = now
             logger.info(f"Refreshed NSX groups cache, loaded {len(groups)} groups")
+            # Write full group/membership details to log file for debugging/inspection
+            logger.debug("NSX groups detail: %r", self._groups)
 
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to refresh NSX groups from NSX-T: {e}")

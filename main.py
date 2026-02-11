@@ -11,11 +11,20 @@ from nsxt_client import NSXTClient
 from forwarder import SyslogForwarder
 
 
-# Configure logging
+# Configure logging (console)
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
+
+# Add a file logger specifically for NSX group debugging
+_nsx_file_handler = logging.FileHandler("nsx_groups.log")
+_nsx_file_handler.setLevel(logging.DEBUG)
+_nsx_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+)
+logging.getLogger("nsxt_client").addHandler(_nsx_file_handler)
+
 logger = logging.getLogger(__name__)
 
 
