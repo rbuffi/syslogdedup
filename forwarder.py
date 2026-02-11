@@ -45,8 +45,13 @@ class SyslogForwarder:
             logger.error(f"Failed to create socket for syslog forwarding: {e}")
             self.socket = None
     
-    def _format_log(self, log: ParsedLog, source_groups: Optional[List[str]] = None, 
-                   dest_groups: Optional[List[str]] = None) -> str:
+    def _format_log(
+        self,
+        log: ParsedLog,
+        source_groups: Optional[List[str]] = None,
+        dest_groups: Optional[List[str]] = None,
+        raw_line: Optional[str] = None,
+    ) -> str:
         """
         Format log with enriched group information.
         
@@ -58,10 +63,11 @@ class SyslogForwarder:
         Returns:
             Formatted log string
         """
+        # Use the full original syslog line if provided; fall back to parsed line
+        base_line = raw_line if raw_line is not None else log.original_line
+
         # Build enriched log line
-        parts = [
-            log.original_line,
-        ]
+        parts = [base_line]
         
         # Add group information if available
         if source_groups:
@@ -71,8 +77,13 @@ class SyslogForwarder:
         
         return " | ".join(parts)
     
-    def forward(self, log: ParsedLog, source_groups: Optional[List[str]] = None,
-                dest_groups: Optional[List[str]] = None) -> bool:
+    def forward(
+        self,
+        log: ParsedLog,
+        source_groups: Optional[List[str]] = None,
+        dest_groups: Optional[List[str]] = None,
+        raw_line: Optional[str] = None,
+    ) -> bool:
         """
         Forward a log to the downstream syslog server.
         
@@ -91,7 +102,7 @@ class SyslogForwarder:
                 return False
         
         try:
-            formatted_log = self._format_log(log, source_groups, dest_groups)
+            formatted_log = self._format_log(log, source_groups, dest_groups, raw_line=raw_line)
             message = formatted_log.encode('utf-8')
 
             if self.config.use_tcp:

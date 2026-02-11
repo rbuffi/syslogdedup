@@ -55,17 +55,10 @@ class LogParser:
         if not log_line or not log_line.strip():
             return None
         
-        # Remove any trailing newlines/whitespace
+        # Remove any trailing newlines/whitespace. At this point we expect only
+        # the firewall-specific part (header stripping is done in main.py).
         log_line = log_line.strip()
 
-        # Many sources (like VMware Log Insight) prepend a syslog header, e.g.:
-        # "<13>1 2026-02-11T11:53:14.350Z host APP PROCID - - <firewall-part>"
-        # We only want to parse the firewall-specific part after the " - - ".
-        if " - - " in log_line:
-            parts = log_line.split(" - - ", 1)
-            if len(parts) == 2:
-                log_line = parts[1].strip()
-        
         match = LogParser.LOG_PATTERN.match(log_line)
         if not match:
             return None

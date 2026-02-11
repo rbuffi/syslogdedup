@@ -61,20 +61,21 @@ class SyslogServer:
             logger.error(f"Failed to setup socket: {e}")
             sys.exit(1)
     
-    def _process_log(self, log_line: str):
+    def _process_log(self, parsed_part: str, raw_line: str):
         """
         Process a single log line through the pipeline.
         
         Args:
-            log_line: Raw log line string
+            parsed_part: Log line after stripping syslog header (firewall part)
+            raw_line: Full raw syslog line as received
         """
         self.stats['received'] += 1
         
-        # Parse the log
-        parsed_log = self.parser.parse(log_line)
+        # Parse the log (only the firewall part)
+        parsed_log = self.parser.parse(parsed_part)
         if not parsed_log:
             # Show the complete raw line in debug to make troubleshooting easy
-            logger.debug(f"Failed to parse log line (raw): {log_line!r}")
+            logger.debug(f"Failed to parse log line (raw): {raw_line!r}")
             self.stats['errors'] += 1
             return
         
@@ -104,8 +105,8 @@ class SyslogServer:
         except Exception as e:
             logger.warning(f"Failed to lookup destination IP {parsed_log.dest_ip} in NSX-T: {e}")
         
-        # Forward the enriched log
-        if self.forwarder.forward(parsed_log, source_groups, dest_groups):
+        # Forward the enriched log, but keep the original syslog header/line
+        if self.forwarder.forward(parsed_log, source_groups, dest_groups, raw_line=raw_line):
             self.stats['forwarded'] += 1
             logger.debug(f"Forwarded log: {parsed_log.source_ip}->{parsed_log.dest_ip}")
         else:
@@ -132,13 +133,20 @@ class SyslogServer:
                 try:
                     # Receive UDP packet (max 65507 bytes for UDP)
                     data, addr = self.socket.recvfrom(65507)
-                    log_line = data.decode('utf-8', errors='replace')
+                    raw_line = data.decode('utf-8', errors='replace')
 
                     # Always log the full raw line at DEBUG level
-                    logger.debug(f"Raw syslog from {addr}: {log_line!r}")
+                    logger.debug(f"Raw syslog from {addr}: {raw_line!r}")
 
-                    # Process the log
-                    self._process_log(log_line)
+                    # For parsing, pass only the firewall part after the syslog header, if present
+                    parsed_part = raw_line
+                    if " - - " in raw_line:
+                        parts = raw_line.split(" - - ", 1)
+                        if len(parts) == 2:
+                            parsed_part = parts[1].strip()
+
+                    # Process the log (parsed_part for parser/dedup, raw_line for forwarding)
+                    self._process_log(parsed_part, raw_line)
                     
                     # Print stats every 1000 logs
                     if self.stats['received'] % 1000 == 0:
