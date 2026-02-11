@@ -73,7 +73,8 @@ class NSXTClient:
             return
 
         try:
-            groups_url = f"{self.base_url}/policy/api/v1/infra/groups"
+            # Use domain-specific groups endpoint (default domain)
+            groups_url = f"{self.base_url}/policy/api/v1/infra/domains/default/groups"
             response = self.session.get(groups_url, timeout=15)
             response.raise_for_status()
             groups_data = response.json()
@@ -86,7 +87,9 @@ class NSXTClient:
                 if not group_id:
                     continue
 
-                detail_url = f"{self.base_url}/policy/api/v1/infra/groups/{group_id}"
+                detail_url = (
+                    f"{self.base_url}/policy/api/v1/infra/domains/default/groups/{group_id}"
+                )
                 try:
                     detail_resp = self.session.get(detail_url, timeout=15)
                     detail_resp.raise_for_status()
