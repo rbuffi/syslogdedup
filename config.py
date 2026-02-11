@@ -11,6 +11,7 @@ class SyslogConfig:
     listen_port: int = 514
     forward_host: str = ""
     forward_port: int = 514
+    use_tcp: bool = False
 
 
 @dataclass
@@ -56,7 +57,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
     syslog_config = SyslogConfig(
         listen_port=int(os.getenv('SYSLOG_LISTEN_PORT', config_data.get('syslog', {}).get('listen_port', 514))),
         forward_host=os.getenv('SYSLOG_FORWARD_HOST', config_data.get('syslog', {}).get('forward_host', '')),
-        forward_port=int(os.getenv('SYSLOG_FORWARD_PORT', config_data.get('syslog', {}).get('forward_port', 514)))
+        forward_port=int(os.getenv('SYSLOG_FORWARD_PORT', config_data.get('syslog', {}).get('forward_port', 514))),
+        use_tcp=os.getenv(
+            'SYSLOG_FORWARD_USE_TCP',
+            str(config_data.get('syslog', {}).get('use_tcp', False))
+        ).lower() == 'true',
     )
     
     nsxt_config = NSXTConfig(

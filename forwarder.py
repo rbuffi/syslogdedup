@@ -24,11 +24,23 @@ class SyslogForwarder:
         self._connect()
     
     def _connect(self):
-        """Establish UDP socket connection to downstream syslog server."""
+        """Establish socket connection to downstream syslog server."""
         try:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            # Socket will be connected on first send
-            logger.info(f"Initialized syslog forwarder to {self.config.forward_host}:{self.config.forward_port}")
+            if self.config.use_tcp:
+                # TCP syslog
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket.connect((self.config.forward_host, self.config.forward_port))
+                logger.info(
+                    f"Initialized TCP syslog forwarder to "
+                    f"{self.config.forward_host}:{self.config.forward_port}"
+                )
+            else:
+                # UDP syslog (default)
+                self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                logger.info(
+                    f"Initialized UDP syslog forwarder to "
+                    f"{self.config.forward_host}:{self.config.forward_port}"
+                )
         except Exception as e:
             logger.error(f"Failed to create socket for syslog forwarding: {e}")
             self.socket = None
@@ -81,12 +93,22 @@ class SyslogForwarder:
         try:
             formatted_log = self._format_log(log, source_groups, dest_groups)
             message = formatted_log.encode('utf-8')
-            
-            self.socket.sendto(message, (self.config.forward_host, self.config.forward_port))
+
+            if self.config.use_tcp:
+                # For TCP syslog, send with newline terminator
+                if not formatted_log.endswith("\n"):
+                    message += b"\n"
+                self.socket.sendall(message)
+            else:
+                # UDP syslog
+                self.socket.sendto(message, (self.config.forward_host, self.config.forward_port))
+
             return True
-            
+
         except socket.error as e:
-            logger.error(f"Failed to forward log to {self.config.forward_host}:{self.config.forward_port}: {e}")
+            logger.error(
+                f"Failed to forward log to {self.config.forward_host}:{self.config.forward_port}: {e}"
+            )
             # Attempt to reconnect on next call
             self.socket = None
             return False
