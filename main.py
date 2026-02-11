@@ -73,7 +73,8 @@ class SyslogServer:
         # Parse the log
         parsed_log = self.parser.parse(log_line)
         if not parsed_log:
-            logger.debug(f"Failed to parse log line: {log_line[:100]}")
+            # Show the complete raw line in debug to make troubleshooting easy
+            logger.debug(f"Failed to parse log line (raw): {log_line!r}")
             self.stats['errors'] += 1
             return
         
@@ -132,7 +133,10 @@ class SyslogServer:
                     # Receive UDP packet (max 65507 bytes for UDP)
                     data, addr = self.socket.recvfrom(65507)
                     log_line = data.decode('utf-8', errors='replace')
-                    
+
+                    # Always log the full raw line at DEBUG level
+                    logger.debug(f"Raw syslog from {addr}: {log_line!r}")
+
                     # Process the log
                     self._process_log(log_line)
                     
