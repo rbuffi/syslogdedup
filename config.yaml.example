@@ -1,0 +1,15 @@
+# Example configuration file for syslog deduplication service
+# Copy this file to config.yaml and update with your settings
+
+syslog:
+  listen_port: 514  # UDP port to listen on (requires root/sudo for port < 1024)
+  forward_host: "downstream-syslog.example.com"  # Downstream syslog server hostname or IP
+  forward_port: 514  # Downstream syslog server port
+
+nsxt:
+  host: "nsxt-manager.example.com"  # NSX-T Manager hostname or IP
+  username: "admin"  # NSX-T Manager username
+  password: "your-password-here"  # NSX-T Manager password
+  verify_ssl: true  # Verify SSL certificates (set to false for self-signed certs)
+  cache_ttl: 3600  # Cache group lookups for 1 hour (in seconds)
+
