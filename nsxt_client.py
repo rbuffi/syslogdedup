@@ -97,6 +97,7 @@ class NSXTClient:
                 if not group_id:
                     continue
 
+                # 1) Get group definition (expressions, etc.)
                 detail_url = (
                     f"{self.base_url}/policy/api/v1/infra/domains/default/groups/{group_id}"
                 )
@@ -105,14 +106,31 @@ class NSXTClient:
                     detail_resp.raise_for_status()
                     detail = detail_resp.json()
                     detail["path"] = group_path  # ensure path is present
-                    groups.append(detail)
                 except requests.exceptions.RequestException as e:
                     logger.warning(f"Failed to get group detail for {group_id}: {e}")
                     continue
 
+                # 2) Get IP members using the dedicated NSX API:
+                #    /policy/api/v1/infra/domains/{domain-id}/groups/{group-id}/members/ip-addresses
+                members_url = (
+                    f"{self.base_url}/policy/api/v1/infra/domains/default/"
+                    f"groups/{group_id}/members/ip-addresses"
+                )
+                try:
+                    members_resp = self.session.get(members_url, timeout=15)
+                    members_resp.raise_for_status()
+                    members_data = members_resp.json()
+                    # According to docs, 'results' is a list of IP/cidr/range elements.
+                    detail["ip_members"] = members_data.get("results", [])
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Failed to get IP members for group {group_id}: {e}")
+                    detail["ip_members"] = []
+
+                groups.append(detail)
+
                 # Soft rate limit within a refresh: sleep a bit between
-                # detail requests so we don't exceed NSX per-client RPS.
-                time.sleep(0.05)  # ~20 detail requests per second max
+                # requests so we don't exceed NSX per-client RPS.
+                time.sleep(0.05)  # ~20 requests per second max
 
             self._groups = groups
             self._groups_last_refresh = now
@@ -164,6 +182,13 @@ class NSXTClient:
         Returns:
             True if IP matches group membership
         """
+        # Prefer explicit IP members if available (from members/ip-addresses API)
+        ip_members = group_detail.get("ip_members")
+        if isinstance(ip_members, list) and ip_members:
+            for elem in ip_members:
+                if self._ip_matches_member_element(ip, elem):
+                    return True
+
         # Check expression criteria (can be a list or a single expression)
         expression = group_detail.get('expression', [])
         if expression:
@@ -186,6 +211,51 @@ class NSXTClient:
                     return True
         
         return False
+
+    def _ip_matches_member_element(self, ip: str, element: Any) -> bool:
+        """
+        Check if an IP matches a single member element from the
+        members/ip-addresses API. Elements may be strings or objects
+        depending on NSX version (CIDR, single IP, or IP range).
+        """
+        try:
+            from ipaddress import ip_address, ip_network
+        except ImportError:
+            return False
+
+        # Element can be a plain string (e.g. "192.168.0.0/24" or "1.2.3.4")
+        # or a range like "1.2.3.4-1.2.3.100", or a dict with such fields.
+        if isinstance(element, dict):
+            value = element.get("ip_address") or element.get("ip_addresses") or element.get("value")
+        else:
+            value = str(element)
+
+        if not value:
+            return False
+
+        value = value.strip()
+
+        # Range: "start-end"
+        if "-" in value and "/" not in value:
+            start_s, end_s = value.split("-", 1)
+            try:
+                ip_obj = ip_address(ip)
+                start_ip = ip_address(start_s.strip())
+                end_ip = ip_address(end_s.strip())
+                return start_ip <= ip_obj <= end_ip
+            except ValueError:
+                return False
+
+        # CIDR or single IP
+        try:
+            # If it's CIDR, this works; if it's a host IP, ip_network with /32
+            if "/" in value:
+                network = ip_network(value, strict=False)
+                return ip_address(ip) in network
+            else:
+                return ip_address(ip) == ip_address(value)
+        except ValueError:
+            return False
     
     def _ip_matches_expression(self, ip: str, expression: dict) -> bool:
         """Check if IP matches an expression criteria."""
