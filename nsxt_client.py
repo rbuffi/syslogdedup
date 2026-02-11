@@ -34,6 +34,7 @@ class NSXTClient:
         # Prefetched groups data (for batch/local lookup)
         self._groups_last_refresh: float = 0.0
         self._groups: List[Dict[str, Any]] = []
+        self._last_refresh_attempt: float = 0.0
     
     def _get_cache_key(self, ip: str) -> str:
         """Generate cache key for IP address."""
@@ -69,6 +70,15 @@ class NSXTClient:
         the NSX API for every single IP.
         """
         now = time.time()
+
+        # Hard throttle: don't attempt a refresh more often than this interval,
+        # regardless of cache_ttl or errors. This keeps us well under NSX rate
+        # and concurrency limits for group downloads.
+        MIN_REFRESH_INTERVAL = 60  # seconds
+        if now - self._last_refresh_attempt < MIN_REFRESH_INTERVAL:
+            return
+        self._last_refresh_attempt = now
+
         if self._groups and (now - self._groups_last_refresh) < self.config.cache_ttl:
             return
 
@@ -99,6 +109,10 @@ class NSXTClient:
                 except requests.exceptions.RequestException as e:
                     logger.warning(f"Failed to get group detail for {group_id}: {e}")
                     continue
+
+                # Soft rate limit within a refresh: sleep a bit between
+                # detail requests so we don't exceed NSX per-client RPS.
+                time.sleep(0.05)  # ~20 detail requests per second max
 
             self._groups = groups
             self._groups_last_refresh = now
