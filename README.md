@@ -27,6 +27,8 @@ syslog:
   listen_port: 514
   forward_host: "downstream-syslog.example.com"
   forward_port: 514
+  # Set to true to forward to downstream syslog over TCP instead of UDP
+  use_tcp: false
 
 nsxt:
   host: "nsxt-manager.example.com"
@@ -40,6 +42,7 @@ Alternatively, you can use environment variables:
 - `SYSLOG_LISTEN_PORT` (default: 514)
 - `SYSLOG_FORWARD_HOST` (required)
 - `SYSLOG_FORWARD_PORT` (default: 514)
+- `SYSLOG_FORWARD_USE_TCP` (default: false)
 - `NSXT_HOST` (required)
 - `NSXT_USERNAME` (required)
 - `NSXT_PASSWORD` (required)

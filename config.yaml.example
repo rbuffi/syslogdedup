@@ -5,6 +5,7 @@ syslog:
   listen_port: 514  # UDP port to listen on (requires root/sudo for port < 1024)
   forward_host: "downstream-syslog.example.com"  # Downstream syslog server hostname or IP
   forward_port: 514  # Downstream syslog server port
+  use_tcp: false  # Set to true to forward logs over TCP instead of UDP
 
 nsxt:
   host: "nsxt-manager.example.com"  # NSX-T Manager hostname or IP
