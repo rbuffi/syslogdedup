@@ -57,6 +57,14 @@ class LogParser:
         
         # Remove any trailing newlines/whitespace
         log_line = log_line.strip()
+
+        # Many sources (like VMware Log Insight) prepend a syslog header, e.g.:
+        # "<13>1 2026-02-11T11:53:14.350Z host APP PROCID - - <firewall-part>"
+        # We only want to parse the firewall-specific part after the " - - ".
+        if " - - " in log_line:
+            parts = log_line.split(" - - ", 1)
+            if len(parts) == 2:
+                log_line = parts[1].strip()
         
         match = LogParser.LOG_PATTERN.match(log_line)
         if not match:
