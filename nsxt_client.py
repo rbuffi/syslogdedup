@@ -165,7 +165,7 @@ class NSXTClient:
             ip_address: IP address to lookup
             
         Returns:
-            List of group names (paths) that contain this IP, or None if lookup fails
+            List of group names that contain this IP, or None if lookup fails
         """
         # Check per-IP cache first
         cached = self._get_from_cache(ip_address)
@@ -175,16 +175,51 @@ class NSXTClient:
         # Ensure we have a fresh in-memory group list
         self._refresh_groups_if_needed()
 
-        matching_paths: List[str] = []
+        matching_names: List[str] = []
         for group_detail in self._groups:
             if self._ip_matches_group(ip_address, group_detail):
-                path = group_detail.get("path") or group_detail.get("display_name") or ""
-                if path:
-                    matching_paths.append(path)
+                # Extract just the group name (not full path)
+                name = self._extract_group_name(group_detail)
+                if name:
+                    matching_names.append(name)
 
         # Store in cache (even if empty list) so repeated lookups are cheap
-        self._store_in_cache(ip_address, matching_paths if matching_paths else [])
-        return matching_paths
+        self._store_in_cache(ip_address, matching_names if matching_names else [])
+        return matching_names
+    
+    def _extract_group_name(self, group_detail: dict) -> str:
+        """
+        Extract just the group name from a group detail dict.
+        Prefers display_name, then extracts name from path, then falls back to id.
+        
+        Args:
+            group_detail: Group detail dictionary from NSX-T API
+            
+        Returns:
+            Group name string, or empty string if none found
+        """
+        # Prefer display_name if available
+        display_name = group_detail.get("display_name", "")
+        if display_name:
+            return display_name
+        
+        # Extract name from path (last component after final /)
+        path = group_detail.get("path", "")
+        if path:
+            # Path format: /infra/domains/default/groups/group-name
+            # Extract the last component
+            parts = path.strip("/").split("/")
+            if parts:
+                name = parts[-1]
+                if name:
+                    return name
+        
+        # Fall back to id
+        group_id = group_detail.get("id", "")
+        if group_id:
+            return group_id
+        
+        return ""
     
     def _ip_matches_group(self, ip: str, group_detail: dict, visited: Optional[set] = None) -> bool:
         """
