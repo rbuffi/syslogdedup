@@ -107,61 +107,61 @@ class NSXTClient:
                     break
                 
                 for group in page_groups:
-                group_id = group.get("id", "")
-                group_path = group.get("path", "")
-                if not group_id:
-                    continue
+                    group_id = group.get("id", "")
+                    group_path = group.get("path", "")
+                    if not group_id:
+                        continue
 
-                # 1) Get group definition (expressions, etc.)
-                detail_url = (
-                    f"{self.base_url}/policy/api/v1/infra/domains/default/groups/{group_id}"
-                )
-                try:
-                    detail_resp = self.session.get(detail_url, timeout=15)
-                    detail_resp.raise_for_status()
-                    detail = detail_resp.json()
-                    detail["path"] = group_path  # ensure path is present
-                except requests.exceptions.RequestException as e:
-                    logger.warning(f"Failed to get group detail for {group_id}: {e}")
-                    continue
+                    # 1) Get group definition (expressions, etc.)
+                    detail_url = (
+                        f"{self.base_url}/policy/api/v1/infra/domains/default/groups/{group_id}"
+                    )
+                    try:
+                        detail_resp = self.session.get(detail_url, timeout=15)
+                        detail_resp.raise_for_status()
+                        detail = detail_resp.json()
+                        detail["path"] = group_path  # ensure path is present
+                    except requests.exceptions.RequestException as e:
+                        logger.warning(f"Failed to get group detail for {group_id}: {e}")
+                        continue
 
-                # 2) Get IP members using the dedicated NSX API with pagination:
-                #    /policy/api/v1/infra/domains/{domain-id}/groups/{group-id}/members/ip-addresses
-                members_url = (
-                    f"{self.base_url}/policy/api/v1/infra/domains/default/"
-                    f"groups/{group_id}/members/ip-addresses"
-                )
-                ip_members: List[Any] = []
-                members_cursor = None
-                
-                try:
-                    while True:
-                        members_params = {"page_size": 1000}
-                        if members_cursor:
-                            members_params["cursor"] = members_cursor
-                        
-                        members_resp = self.session.get(members_url, params=members_params, timeout=15)
-                        members_resp.raise_for_status()
-                        members_data = members_resp.json()
-                        
-                        page_members = members_data.get("results", [])
-                        if not page_members:
-                            break
-                        
-                        ip_members.extend(page_members)
-                        
-                        # Check for next page
-                        members_cursor = members_data.get("cursor")
-                        if not members_cursor:
-                            break
-                        
-                        # Small delay between member pages
-                        time.sleep(0.02)
+                    # 2) Get IP members using the dedicated NSX API with pagination:
+                    #    /policy/api/v1/infra/domains/{domain-id}/groups/{group-id}/members/ip-addresses
+                    members_url = (
+                        f"{self.base_url}/policy/api/v1/infra/domains/default/"
+                        f"groups/{group_id}/members/ip-addresses"
+                    )
+                    ip_members: List[Any] = []
+                    members_cursor = None
                     
-                    detail["ip_members"] = ip_members
-                except requests.exceptions.RequestException as e:
-                    logger.warning(f"Failed to get IP members for group {group_id}: {e}")
-                    detail["ip_members"] = []
+                    try:
+                        while True:
+                            members_params = {"page_size": 1000}
+                            if members_cursor:
+                                members_params["cursor"] = members_cursor
+                            
+                            members_resp = self.session.get(members_url, params=members_params, timeout=15)
+                            members_resp.raise_for_status()
+                            members_data = members_resp.json()
+                            
+                            page_members = members_data.get("results", [])
+                            if not page_members:
+                                break
+                            
+                            ip_members.extend(page_members)
+                            
+                            # Check for next page
+                            members_cursor = members_data.get("cursor")
+                            if not members_cursor:
+                                break
+                            
+                            # Small delay between member pages
+                            time.sleep(0.02)
+                        
+                        detail["ip_members"] = ip_members
+                    except requests.exceptions.RequestException as e:
+                        logger.warning(f"Failed to get IP members for group {group_id}: {e}")
+                        detail["ip_members"] = []
 
                     groups.append(detail)
 
