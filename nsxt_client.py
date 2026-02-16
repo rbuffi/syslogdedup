@@ -243,34 +243,44 @@ class NSXTClient:
     
     def _calculate_member_count(self, group_detail: dict) -> int:
         """
-        Calculate the effective number of members in a group.
+        Calculate the total number of individual IP addresses in a group.
+        Counts individual IPs, not just member entries (e.g., /24 = 256 IPs).
         
         Args:
             group_detail: Group detail dictionary from NSX-T API
             
         Returns:
-            Count of effective members (IPs, subnets, ranges, etc.)
+            Total count of individual IP addresses
         """
-        count = 0
+        try:
+            from ipaddress import ip_address, ip_network
+        except ImportError:
+            # Fallback to simple count if ipaddress not available
+            return len(group_detail.get("ip_members", []))
+        
+        total_ips = 0
         
         # Count explicit IP members from members/ip-addresses API
         ip_members = group_detail.get("ip_members", [])
         if isinstance(ip_members, list):
-            count += len(ip_members)
+            for member in ip_members:
+                total_ips += self._count_ips_in_member(member)
         
-        # If no explicit members, estimate from other fields
-        if count == 0:
-            # Count from ip_addresses list
+        # If no explicit members, count from other fields
+        if total_ips == 0:
+            # Count from ip_addresses list (each is 1 IP)
             ip_addresses = group_detail.get("ip_addresses", [])
             if isinstance(ip_addresses, list):
-                count += len(ip_addresses)
+                total_ips += len(ip_addresses)
             
-            # Count from ip_ranges list
+            # Count from ip_ranges list (calculate IPs in each range)
             ip_ranges = group_detail.get("ip_ranges", [])
             if isinstance(ip_ranges, list):
-                count += len(ip_ranges)
+                for ip_range in ip_ranges:
+                    if isinstance(ip_range, str):
+                        total_ips += self._count_ips_in_member(ip_range)
             
-            # Count from expressions (rough estimate)
+            # Count from expressions
             expression = group_detail.get("expression", [])
             if expression:
                 expressions = expression if isinstance(expression, list) else [expression]
@@ -278,11 +288,63 @@ class NSXTClient:
                     if isinstance(expr, dict):
                         expr_ips = expr.get("ip_addresses", [])
                         if isinstance(expr_ips, list):
-                            count += len(expr_ips)
+                            total_ips += len(expr_ips)
         
         # If still 0, default to a high number (groups with no direct members
         # might be nested-only, so we prefer groups with explicit members)
-        return count if count > 0 else 999999
+        return total_ips if total_ips > 0 else 999999
+    
+    def _count_ips_in_member(self, member: Any) -> int:
+        """
+        Count the number of individual IP addresses in a member element.
+        
+        Args:
+            member: Member element (string or dict) - can be CIDR, IP range, or single IP
+            
+        Returns:
+            Number of individual IPs
+        """
+        try:
+            from ipaddress import ip_address, ip_network
+        except ImportError:
+            return 1  # Fallback: assume 1 IP
+        
+        # Extract value from dict or use string directly
+        if isinstance(member, dict):
+            value = member.get("ip_address") or member.get("ip_addresses") or member.get("value")
+        else:
+            value = str(member)
+        
+        if not value:
+            return 0
+        
+        value = str(value).strip()
+        
+        # IP range: "start-end"
+        if "-" in value and "/" not in value:
+            try:
+                start_s, end_s = value.split("-", 1)
+                start_ip = ip_address(start_s.strip())
+                end_ip = ip_address(end_s.strip())
+                # Count IPs in range (inclusive)
+                return int(end_ip) - int(start_ip) + 1
+            except (ValueError, AttributeError):
+                return 1
+        
+        # CIDR subnet: "10.0.0.0/24"
+        if "/" in value:
+            try:
+                network = ip_network(value, strict=False)
+                return network.num_addresses
+            except (ValueError, AttributeError):
+                return 1
+        
+        # Single IP
+        try:
+            ip_address(value)
+            return 1
+        except ValueError:
+            return 1
     
     def _extract_group_name(self, group_detail: dict) -> str:
         """
