@@ -35,6 +35,9 @@ class NSXTClient:
         self._groups_last_refresh: float = 0.0
         self._groups: List[Dict[str, Any]] = []
         self._last_refresh_attempt: float = 0.0
+        # Map for fast group lookup by path/id (for nested group resolution)
+        self._groups_by_path: Dict[str, Dict[str, Any]] = {}
+        self._groups_by_id: Dict[str, Dict[str, Any]] = {}
     
     def _get_cache_key(self, ip: str) -> str:
         """Generate cache key for IP address."""
@@ -134,6 +137,18 @@ class NSXTClient:
 
             self._groups = groups
             self._groups_last_refresh = now
+            
+            # Build lookup maps for nested group resolution
+            self._groups_by_path = {}
+            self._groups_by_id = {}
+            for g in groups:
+                path = g.get("path", "")
+                gid = g.get("id", "")
+                if path:
+                    self._groups_by_path[path] = g
+                if gid:
+                    self._groups_by_id[gid] = g
+            
             logger.info(f"Refreshed NSX groups cache, loaded {len(groups)} groups")
             # Write full group/membership details to log file for debugging/inspection
             logger.debug("NSX groups detail: %r", self._groups)
@@ -171,17 +186,31 @@ class NSXTClient:
         self._store_in_cache(ip_address, matching_paths if matching_paths else [])
         return matching_paths
     
-    def _ip_matches_group(self, ip: str, group_detail: dict) -> bool:
+    def _ip_matches_group(self, ip: str, group_detail: dict, visited: Optional[set] = None) -> bool:
         """
         Check if an IP address matches a group's membership criteria.
+        Recursively checks nested groups.
         
         Args:
             ip: IP address to check
             group_detail: Group detail dictionary from NSX-T API
+            visited: Set of group paths/IDs already visited (to prevent infinite loops)
             
         Returns:
             True if IP matches group membership
         """
+        if visited is None:
+            visited = set()
+        
+        # Prevent infinite loops from circular group references
+        group_id = group_detail.get("id", "")
+        group_path = group_detail.get("path", "")
+        visit_key = group_id or group_path
+        if visit_key and visit_key in visited:
+            return False
+        if visit_key:
+            visited.add(visit_key)
+        
         # Prefer explicit IP members if available (from members/ip-addresses API)
         ip_members = group_detail.get("ip_members")
         if isinstance(ip_members, list) and ip_members:
@@ -195,8 +224,16 @@ class NSXTClient:
             # Handle both list and single expression
             expressions = expression if isinstance(expression, list) else [expression]
             for expr in expressions:
-                if isinstance(expr, dict) and self._ip_matches_expression(ip, expr):
-                    return True
+                if isinstance(expr, dict):
+                    # Check if expression references nested groups
+                    if self._expression_has_nested_groups(expr):
+                        nested_groups = self._extract_nested_groups_from_expression(expr)
+                        for nested_group in nested_groups:
+                            if self._ip_matches_group(ip, nested_group, visited):
+                                return True
+                    # Also check direct IP matching in expression
+                    if self._ip_matches_expression(ip, expr):
+                        return True
         
         # Check IP address sets (direct IP addresses)
         ip_addresses = group_detail.get('ip_addresses', [])
@@ -211,6 +248,49 @@ class NSXTClient:
                     return True
         
         return False
+    
+    def _expression_has_nested_groups(self, expression: dict) -> bool:
+        """Check if an expression contains nested group references."""
+        expr_type = expression.get('resource_type', '')
+        # Common NSX-T expression types that reference groups
+        if expr_type in ('GroupExpression', 'NestedExpression', 'Condition'):
+            return True
+        # Check if expression has member_groups or similar fields
+        if 'member_groups' in expression or 'groups' in expression or 'group_paths' in expression:
+            return True
+        return False
+    
+    def _extract_nested_groups_from_expression(self, expression: dict) -> List[Dict[str, Any]]:
+        """
+        Extract nested group references from an expression and return their group details.
+        
+        Returns:
+            List of group detail dictionaries for nested groups
+        """
+        nested_groups = []
+        
+        # Check various fields that might contain group references
+        group_paths = expression.get('group_paths', [])
+        if not group_paths:
+            group_paths = expression.get('member_groups', [])
+        if not group_paths:
+            group_paths = expression.get('groups', [])
+        if not group_paths:
+            # Sometimes it's a single path/id
+            path = expression.get('path') or expression.get('group_path') or expression.get('id')
+            if path:
+                group_paths = [path]
+        
+        for path_or_id in group_paths:
+            # Try lookup by path first
+            nested = self._groups_by_path.get(path_or_id)
+            if not nested:
+                # Try lookup by ID
+                nested = self._groups_by_id.get(path_or_id)
+            if nested:
+                nested_groups.append(nested)
+        
+        return nested_groups
 
     def _ip_matches_member_element(self, ip: str, element: Any) -> bool:
         """
