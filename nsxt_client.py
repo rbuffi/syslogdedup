@@ -1,7 +1,7 @@
 """NSX-T Manager API client for IP-to-group lookups."""
 import logging
 import time
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 import requests
 from requests.auth import HTTPBasicAuth
 from config import NSXTConfig
@@ -163,6 +163,8 @@ class NSXTClient:
                         logger.warning(f"Failed to get IP members for group {group_id}: {e}")
                         detail["ip_members"] = []
 
+                    # Calculate and store member count for selection logic
+                    detail["member_count"] = self._calculate_member_count(detail)
                     groups.append(detail)
 
                     # Soft rate limit within a refresh: sleep a bit between
@@ -202,12 +204,13 @@ class NSXTClient:
     def lookup_ip_groups(self, ip_address: str) -> Optional[List[str]]:
         """
         Lookup which NSX groups contain the given IP address.
+        Returns only the group(s) with the least effective members.
         
         Args:
             ip_address: IP address to lookup
             
         Returns:
-            List of group names that contain this IP, or None if lookup fails
+            List containing the group name with least members, or None if lookup fails
         """
         # Check per-IP cache first
         cached = self._get_from_cache(ip_address)
@@ -217,17 +220,69 @@ class NSXTClient:
         # Ensure we have a fresh in-memory group list
         self._refresh_groups_if_needed()
 
-        matching_names: List[str] = []
+        matching_groups: List[Tuple[str, int]] = []  # (name, member_count)
         for group_detail in self._groups:
             if self._ip_matches_group(ip_address, group_detail):
                 # Extract just the group name (not full path)
                 name = self._extract_group_name(group_detail)
                 if name:
-                    matching_names.append(name)
+                    member_count = group_detail.get("member_count", 999999)
+                    matching_groups.append((name, member_count))
 
+        if not matching_groups:
+            self._store_in_cache(ip_address, [])
+            return []
+        
+        # Select group(s) with the least members
+        min_count = min(count for _, count in matching_groups)
+        selected = [name for name, count in matching_groups if count == min_count]
+        
         # Store in cache (even if empty list) so repeated lookups are cheap
-        self._store_in_cache(ip_address, matching_names if matching_names else [])
-        return matching_names
+        self._store_in_cache(ip_address, selected)
+        return selected
+    
+    def _calculate_member_count(self, group_detail: dict) -> int:
+        """
+        Calculate the effective number of members in a group.
+        
+        Args:
+            group_detail: Group detail dictionary from NSX-T API
+            
+        Returns:
+            Count of effective members (IPs, subnets, ranges, etc.)
+        """
+        count = 0
+        
+        # Count explicit IP members from members/ip-addresses API
+        ip_members = group_detail.get("ip_members", [])
+        if isinstance(ip_members, list):
+            count += len(ip_members)
+        
+        # If no explicit members, estimate from other fields
+        if count == 0:
+            # Count from ip_addresses list
+            ip_addresses = group_detail.get("ip_addresses", [])
+            if isinstance(ip_addresses, list):
+                count += len(ip_addresses)
+            
+            # Count from ip_ranges list
+            ip_ranges = group_detail.get("ip_ranges", [])
+            if isinstance(ip_ranges, list):
+                count += len(ip_ranges)
+            
+            # Count from expressions (rough estimate)
+            expression = group_detail.get("expression", [])
+            if expression:
+                expressions = expression if isinstance(expression, list) else [expression]
+                for expr in expressions:
+                    if isinstance(expr, dict):
+                        expr_ips = expr.get("ip_addresses", [])
+                        if isinstance(expr_ips, list):
+                            count += len(expr_ips)
+        
+        # If still 0, default to a high number (groups with no direct members
+        # might be nested-only, so we prefer groups with explicit members)
+        return count if count > 0 else 999999
     
     def _extract_group_name(self, group_detail: dict) -> str:
         """
