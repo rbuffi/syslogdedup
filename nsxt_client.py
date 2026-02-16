@@ -87,14 +87,26 @@ class NSXTClient:
 
         try:
             # Use domain-specific groups endpoint (default domain)
-            groups_url = f"{self.base_url}/policy/api/v1/infra/domains/default/groups"
-            response = self.session.get(groups_url, timeout=15)
-            response.raise_for_status()
-            groups_data = response.json()
-
+            # Fetch all groups with pagination support
             groups: List[Dict[str, Any]] = []
-
-            for group in groups_data.get("results", []):
+            cursor = None
+            page_size = 1000  # Max page size per NSX API
+            
+            while True:
+                groups_url = f"{self.base_url}/policy/api/v1/infra/domains/default/groups"
+                params = {"page_size": page_size}
+                if cursor:
+                    params["cursor"] = cursor
+                
+                response = self.session.get(groups_url, params=params, timeout=15)
+                response.raise_for_status()
+                groups_data = response.json()
+                
+                page_groups = groups_data.get("results", [])
+                if not page_groups:
+                    break
+                
+                for group in page_groups:
                 group_id = group.get("id", "")
                 group_path = group.get("path", "")
                 if not group_id:
@@ -113,27 +125,57 @@ class NSXTClient:
                     logger.warning(f"Failed to get group detail for {group_id}: {e}")
                     continue
 
-                # 2) Get IP members using the dedicated NSX API:
+                # 2) Get IP members using the dedicated NSX API with pagination:
                 #    /policy/api/v1/infra/domains/{domain-id}/groups/{group-id}/members/ip-addresses
                 members_url = (
                     f"{self.base_url}/policy/api/v1/infra/domains/default/"
                     f"groups/{group_id}/members/ip-addresses"
                 )
+                ip_members: List[Any] = []
+                members_cursor = None
+                
                 try:
-                    members_resp = self.session.get(members_url, timeout=15)
-                    members_resp.raise_for_status()
-                    members_data = members_resp.json()
-                    # According to docs, 'results' is a list of IP/cidr/range elements.
-                    detail["ip_members"] = members_data.get("results", [])
+                    while True:
+                        members_params = {"page_size": 1000}
+                        if members_cursor:
+                            members_params["cursor"] = members_cursor
+                        
+                        members_resp = self.session.get(members_url, params=members_params, timeout=15)
+                        members_resp.raise_for_status()
+                        members_data = members_resp.json()
+                        
+                        page_members = members_data.get("results", [])
+                        if not page_members:
+                            break
+                        
+                        ip_members.extend(page_members)
+                        
+                        # Check for next page
+                        members_cursor = members_data.get("cursor")
+                        if not members_cursor:
+                            break
+                        
+                        # Small delay between member pages
+                        time.sleep(0.02)
+                    
+                    detail["ip_members"] = ip_members
                 except requests.exceptions.RequestException as e:
                     logger.warning(f"Failed to get IP members for group {group_id}: {e}")
                     detail["ip_members"] = []
 
-                groups.append(detail)
+                    groups.append(detail)
 
-                # Soft rate limit within a refresh: sleep a bit between
-                # requests so we don't exceed NSX per-client RPS.
-                time.sleep(0.05)  # ~20 requests per second max
+                    # Soft rate limit within a refresh: sleep a bit between
+                    # requests so we don't exceed NSX per-client RPS.
+                    time.sleep(0.05)  # ~20 requests per second max
+                
+                # Check for next page of groups
+                cursor = groups_data.get("cursor")
+                if not cursor:
+                    break
+                
+                # Small delay between group list pages
+                time.sleep(0.05)
 
             self._groups = groups
             self._groups_last_refresh = now
