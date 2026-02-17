@@ -60,7 +60,9 @@ class PostgresClient:
             rule_name TEXT,
             direction TEXT,
             action TEXT,
-            result TEXT
+            result TEXT,
+            hit_count INT DEFAULT 1,
+            UNIQUE(src_ip, dest_ip, dest_port, protocol, rule_id)
         );
         """
         try:
@@ -90,8 +92,18 @@ class PostgresClient:
         INSERT INTO {self.config.table} (
             src_ip, src_group, dest_ip, dest_group,
             dest_port, protocol, rule_id, rule_name,
-            direction, action, result
+            direction, action, result, hit_count
         ) VALUES %s
+        ON CONFLICT (src_ip, dest_ip, dest_port, protocol, rule_id)
+        DO UPDATE SET
+            hit_count = {self.config.table}.hit_count + 1,
+            ts = NOW(),
+            src_group = EXCLUDED.src_group,
+            dest_group = EXCLUDED.dest_group,
+            rule_name = EXCLUDED.rule_name,
+            direction = EXCLUDED.direction,
+            action = EXCLUDED.action,
+            result = EXCLUDED.result
         """
         values = [
             (
@@ -106,6 +118,7 @@ class PostgresClient:
                 log.direction,
                 log.action,
                 log.result,
+                1,  # Initial hit_count
             )
         ]
 
@@ -114,7 +127,7 @@ class PostgresClient:
                 execute_values(cur, sql, values)
             return True
         except Exception as e:
-            logger.debug(f"Failed to insert flow into PostgreSQL: {e}")
+            logger.debug(f"Failed to insert/update flow in PostgreSQL: {e}")
             return False
 
 
