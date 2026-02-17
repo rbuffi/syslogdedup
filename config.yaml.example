@@ -14,3 +14,12 @@ nsxt:
   verify_ssl: true  # Verify SSL certificates (set to false for self-signed certs)
   cache_ttl: 3600  # Cache group lookups for 1 hour (in seconds)
 
+influx:
+  enabled: false  # Set to true to enable InfluxDB writing
+  host: "localhost"  # InfluxDB host
+  port: 8086  # InfluxDB HTTP port
+  database: "firewall"  # InfluxDB database name
+  username: ""  # InfluxDB username (optional)
+  password: ""  # InfluxDB password (optional)
+  measurement: "firewall_logs"  # InfluxDB measurement name
+

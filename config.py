@@ -25,10 +25,23 @@ class NSXTConfig:
 
 
 @dataclass
+class InfluxConfig:
+    """InfluxDB v1 configuration."""
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 8086
+    database: str = ""
+    username: str = ""
+    password: str = ""
+    measurement: str = "firewall_logs"
+
+
+@dataclass
 class Config:
     """Main configuration class."""
     syslog: SyslogConfig
     nsxt: NSXTConfig
+    influx: InfluxConfig
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -71,6 +84,20 @@ def load_config(config_path: Optional[str] = None) -> Config:
         verify_ssl=os.getenv('NSXT_VERIFY_SSL', str(config_data.get('nsxt', {}).get('verify_ssl', True))).lower() == 'true',
         cache_ttl=int(os.getenv('NSXT_CACHE_TTL', config_data.get('nsxt', {}).get('cache_ttl', 3600)))
     )
+
+    influx_cfg = config_data.get('influx', {})
+    influx_config = InfluxConfig(
+        enabled=os.getenv(
+            'INFLUX_ENABLED',
+            str(influx_cfg.get('enabled', False))
+        ).lower() == 'true',
+        host=os.getenv('INFLUX_HOST', influx_cfg.get('host', 'localhost')),
+        port=int(os.getenv('INFLUX_PORT', influx_cfg.get('port', 8086))),
+        database=os.getenv('INFLUX_DB', influx_cfg.get('database', '')),
+        username=os.getenv('INFLUX_USERNAME', influx_cfg.get('username', '')),
+        password=os.getenv('INFLUX_PASSWORD', influx_cfg.get('password', '')),
+        measurement=os.getenv('INFLUX_MEASUREMENT', influx_cfg.get('measurement', 'firewall_logs')),
+    )
     
     # Validate required fields
     if not syslog_config.forward_host:
@@ -81,6 +108,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
         raise ValueError("NSXT_USERNAME or nsxt.username must be set")
     if not nsxt_config.password:
         raise ValueError("NSXT_PASSWORD or nsxt.password must be set")
+
+    # InfluxDB is optional: only validate database if enabled
+    if influx_config.enabled and not influx_config.database:
+        raise ValueError("INFLUX_DB or influx.database must be set when Influx is enabled")
     
-    return Config(syslog=syslog_config, nsxt=nsxt_config)
+    return Config(syslog=syslog_config, nsxt=nsxt_config, influx=influx_config)
 

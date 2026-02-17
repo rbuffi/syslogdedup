@@ -9,6 +9,7 @@ from parser import LogParser
 from deduplicator import Deduplicator
 from nsxt_client import NSXTClient
 from forwarder import SyslogForwarder
+from influx_client import InfluxClient
 
 
 # Configure logging (console)
@@ -43,6 +44,7 @@ class SyslogServer:
         self.deduplicator = Deduplicator()
         self.nsxt_client = NSXTClient(config.nsxt)
         self.forwarder = SyslogForwarder(config.syslog)
+        self.influx_client = InfluxClient(config.influx)
         self.socket = None
         self.running = False
         
@@ -121,6 +123,12 @@ class SyslogServer:
         else:
             self.stats['errors'] += 1
             logger.warning(f"Failed to forward log: {parsed_log.source_ip}->{parsed_log.dest_ip}")
+
+        # Write to InfluxDB (best-effort, non-blocking on failure)
+        try:
+            self.influx_client.write_log(parsed_log, source_groups, dest_groups)
+        except Exception as e:
+            logger.debug(f"Failed to write log to InfluxDB: {e}")
     
     def _print_stats(self):
         """Print statistics."""

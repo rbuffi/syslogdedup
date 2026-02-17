@@ -36,6 +36,15 @@ nsxt:
   password: "password"
   verify_ssl: true
   cache_ttl: 3600  # Cache group lookups for 1 hour
+
+influx:
+  enabled: false  # Set to true to enable InfluxDB v1 writes
+  host: "localhost"
+  port: 8086
+  database: "firewall"
+  username: ""
+  password: ""
+  measurement: "firewall_logs"
 ```
 
 Alternatively, you can use environment variables:
@@ -47,6 +56,13 @@ Alternatively, you can use environment variables:
 - `NSXT_USERNAME` (required)
 - `NSXT_PASSWORD` (required)
 - `NSXT_VERIFY_SSL` (default: true)
+- `INFLUX_ENABLED` (default: false)
+- `INFLUX_HOST` (default: localhost)
+- `INFLUX_PORT` (default: 8086)
+- `INFLUX_DB` (required if Influx enabled)
+- `INFLUX_USERNAME` (optional)
+- `INFLUX_PASSWORD` (optional)
+- `INFLUX_MEASUREMENT` (default: firewall_logs)
 
 ## Usage
 
