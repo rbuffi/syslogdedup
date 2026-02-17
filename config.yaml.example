@@ -23,3 +23,12 @@ influx:
   password: ""  # InfluxDB password (optional)
   measurement: "firewall_logs"  # InfluxDB measurement name
 
+postgres:
+  enabled: false  # Set to true to enable PostgreSQL writing
+  host: "localhost"
+  port: 5432
+  database: "firewall"
+  user: "firewall_user"
+  password: "your-password-here"
+  table: "flows"
+

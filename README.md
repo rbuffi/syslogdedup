@@ -45,6 +45,15 @@ influx:
   username: ""
   password: ""
   measurement: "firewall_logs"
+
+postgres:
+  enabled: false  # Set to true to enable PostgreSQL writes
+  host: "localhost"
+  port: 5432
+  database: "firewall"
+  user: "firewall_user"
+  password: "password"
+  table: "flows"
 ```
 
 Alternatively, you can use environment variables:
@@ -63,6 +72,13 @@ Alternatively, you can use environment variables:
 - `INFLUX_USERNAME` (optional)
 - `INFLUX_PASSWORD` (optional)
 - `INFLUX_MEASUREMENT` (default: firewall_logs)
+- `PG_ENABLED` (default: false)
+- `PG_HOST` (default: localhost)
+- `PG_PORT` (default: 5432)
+- `PG_DB` (required if Postgres enabled)
+- `PG_USER` (required if Postgres enabled)
+- `PG_PASSWORD` (optional)
+- `PG_TABLE` (default: flows)
 
 ## Usage
 

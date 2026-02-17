@@ -10,6 +10,7 @@ from deduplicator import Deduplicator
 from nsxt_client import NSXTClient
 from forwarder import SyslogForwarder
 from influx_client import InfluxClient
+from postgres_client import PostgresClient
 
 
 # Configure logging (console)
@@ -45,6 +46,7 @@ class SyslogServer:
         self.nsxt_client = NSXTClient(config.nsxt)
         self.forwarder = SyslogForwarder(config.syslog)
         self.influx_client = InfluxClient(config.influx)
+        self.pg_client = PostgresClient(config.postgres)
         self.socket = None
         self.running = False
         
@@ -129,6 +131,12 @@ class SyslogServer:
             self.influx_client.write_log(parsed_log, source_groups, dest_groups)
         except Exception as e:
             logger.debug(f"Failed to write log to InfluxDB: {e}")
+
+        # Write to PostgreSQL (best-effort)
+        try:
+            self.pg_client.write_log(parsed_log, source_groups, dest_groups)
+        except Exception as e:
+            logger.debug(f"Failed to write log to PostgreSQL: {e}")
     
     def _print_stats(self):
         """Print statistics."""

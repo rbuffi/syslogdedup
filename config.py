@@ -37,11 +37,24 @@ class InfluxConfig:
 
 
 @dataclass
+class PostgresConfig:
+    """PostgreSQL configuration."""
+    enabled: bool = False
+    host: str = "localhost"
+    port: int = 5432
+    database: str = ""
+    user: str = ""
+    password: str = ""
+    table: str = "flows"
+
+
+@dataclass
 class Config:
     """Main configuration class."""
     syslog: SyslogConfig
     nsxt: NSXTConfig
     influx: InfluxConfig
+    postgres: PostgresConfig
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -98,6 +111,20 @@ def load_config(config_path: Optional[str] = None) -> Config:
         password=os.getenv('INFLUX_PASSWORD', influx_cfg.get('password', '')),
         measurement=os.getenv('INFLUX_MEASUREMENT', influx_cfg.get('measurement', 'firewall_logs')),
     )
+
+    pg_cfg = config_data.get('postgres', {})
+    postgres_config = PostgresConfig(
+        enabled=os.getenv(
+            'PG_ENABLED',
+            str(pg_cfg.get('enabled', False))
+        ).lower() == 'true',
+        host=os.getenv('PG_HOST', pg_cfg.get('host', 'localhost')),
+        port=int(os.getenv('PG_PORT', pg_cfg.get('port', 5432))),
+        database=os.getenv('PG_DB', pg_cfg.get('database', '')),
+        user=os.getenv('PG_USER', pg_cfg.get('user', '')),
+        password=os.getenv('PG_PASSWORD', pg_cfg.get('password', '')),
+        table=os.getenv('PG_TABLE', pg_cfg.get('table', 'flows')),
+    )
     
     # Validate required fields
     if not syslog_config.forward_host:
@@ -112,6 +139,13 @@ def load_config(config_path: Optional[str] = None) -> Config:
     # InfluxDB is optional: only validate database if enabled
     if influx_config.enabled and not influx_config.database:
         raise ValueError("INFLUX_DB or influx.database must be set when Influx is enabled")
+
+    # PostgreSQL is optional: only validate basic settings if enabled
+    if postgres_config.enabled:
+        if not postgres_config.database:
+            raise ValueError("PG_DB or postgres.database must be set when Postgres is enabled")
+        if not postgres_config.user:
+            raise ValueError("PG_USER or postgres.user must be set when Postgres is enabled")
     
-    return Config(syslog=syslog_config, nsxt=nsxt_config, influx=influx_config)
+    return Config(syslog=syslog_config, nsxt=nsxt_config, influx=influx_config, postgres=postgres_config)
 
