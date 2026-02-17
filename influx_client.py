@@ -73,14 +73,18 @@ class InfluxClient:
             tags.append(f"dest_group={esc_tag(dest_group)}")
 
         # Fields: strings must be quoted, ints plain
+        # Pre-escape quotes in strings to avoid f-string backslash issues
+        rule_id_escaped = log.rule_id.replace('"', '\\"')
+        rule_name_escaped = log.rule_name.replace('"', '\\"')
+
         fields = [
             f"src_port={int(log.source_port)}i",
             f"dest_port={int(log.dest_port)}i",
-            f"rule_id=\"{log.rule_id.replace('\"', r'\\\"')}\"",
-            f"rule_name=\"{log.rule_name.replace('\"', r'\\\"')}\"",
-            f"direction=\"{log.direction}\"",
-            f"action=\"{log.action}\"",
-            f"result=\"{log.result}\"",
+            f'rule_id="{rule_id_escaped}"',
+            f'rule_name="{rule_name_escaped}"',
+            f'direction="{log.direction}"',
+            f'action="{log.action}"',
+            f'result="{log.result}"',
         ]
 
         # Use current time in nanoseconds
