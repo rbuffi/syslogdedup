@@ -62,7 +62,7 @@ class PostgresClient:
             action TEXT,
             result TEXT,
             hit_count INT DEFAULT 1,
-            UNIQUE(src_ip, dest_ip, dest_port, protocol, rule_id)
+            UNIQUE(src_ip, dest_ip, dest_port, protocol)
         );
         """
         try:
@@ -94,12 +94,13 @@ class PostgresClient:
             dest_port, protocol, rule_id, rule_name,
             direction, action, result, hit_count
         ) VALUES %s
-        ON CONFLICT (src_ip, dest_ip, dest_port, protocol, rule_id)
+        ON CONFLICT (src_ip, dest_ip, dest_port, protocol)
         DO UPDATE SET
             hit_count = {self.config.table}.hit_count + 1,
             ts = NOW(),
             src_group = EXCLUDED.src_group,
             dest_group = EXCLUDED.dest_group,
+            rule_id = EXCLUDED.rule_id,
             rule_name = EXCLUDED.rule_name,
             direction = EXCLUDED.direction,
             action = EXCLUDED.action,
