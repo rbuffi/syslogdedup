@@ -1,9 +1,9 @@
 """PostgreSQL client for storing aggregated firewall flows."""
 import logging
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 import psycopg2
-from psycopg2.extras import execute_values
+from psycopg2.extras import execute_values, RealDictCursor
 
 from config import PostgresConfig
 from parser import ParsedLog
@@ -130,5 +130,128 @@ class PostgresClient:
         except Exception as e:
             logger.debug(f"Failed to insert/update flow in PostgreSQL: {e}")
             return False
+
+    def _ensure_conn(self) -> bool:
+        """Ensure we have a connection (for read-only use when enabled later)."""
+        if not self.config.enabled:
+            return False
+        if not self.conn:
+            self._connect()
+        return self.conn is not None
+
+    def get_groups(self) -> Dict[str, List[str]]:
+        """Return distinct source_group and dest_group lists for dropdowns."""
+        out: Dict[str, List[str]] = {"source_groups": [], "dest_groups": []}
+        if not self._ensure_conn():
+            return out
+        t = self.config.table
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    f"""
+                    SELECT DISTINCT COALESCE(src_group, '') AS g
+                    FROM {t}
+                    WHERE src_group IS NOT NULL AND src_group != ''
+                    ORDER BY 1
+                    """
+                )
+                out["source_groups"] = [r["g"] for r in cur.fetchall()]
+                cur.execute(
+                    f"""
+                    SELECT DISTINCT COALESCE(dest_group, '') AS g
+                    FROM {t}
+                    WHERE dest_group IS NOT NULL AND dest_group != ''
+                    ORDER BY 1
+                    """
+                )
+                out["dest_groups"] = [r["g"] for r in cur.fetchall()]
+        except Exception as e:
+            logger.debug(f"Failed to get groups from PostgreSQL: {e}")
+        return out
+
+    def get_rules(
+        self,
+        source_group: Optional[str] = None,
+        dest_group: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return flat list of rules with optional filter by source_group, dest_group."""
+        if not self._ensure_conn():
+            return []
+        t = self.config.table
+        source_group = (source_group or "").strip()
+        dest_group = (dest_group or "").strip()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    f"""
+                    SELECT
+                        COALESCE(src_group, '')   AS source_group,
+                        COALESCE(dest_group, '')  AS dest_group,
+                        dest_port,
+                        src_ip,
+                        dest_ip,
+                        direction,
+                        result,
+                        hit_count,
+                        protocol,
+                        rule_id,
+                        rule_name
+                    FROM {t}
+                    WHERE (%s = '' OR COALESCE(src_group, '') = %s)
+                      AND (%s = '' OR COALESCE(dest_group, '') = %s)
+                    ORDER BY src_group, dest_group, hit_count DESC, dest_port
+                    """,
+                    (source_group, source_group, dest_group, dest_group),
+                )
+                rows = cur.fetchall()
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.debug(f"Failed to get rules from PostgreSQL: {e}")
+            return []
+
+    def get_rules_grouped(
+        self,
+        source_group: Optional[str] = None,
+        dest_group: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Return rules grouped by (source_group, dest_group) with aggregated dest_ports."""
+        if not self._ensure_conn():
+            return []
+        t = self.config.table
+        source_group = (source_group or "").strip()
+        dest_group = (dest_group or "").strip()
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    f"""
+                    SELECT
+                        COALESCE(src_group, '')   AS source_group,
+                        COALESCE(dest_group, '')  AS dest_group,
+                        array_agg(DISTINCT dest_port ORDER BY dest_port)
+                            FILTER (WHERE dest_port IS NOT NULL) AS dest_ports,
+                        direction,
+                        result,
+                        SUM(hit_count)::BIGINT AS hit_count
+                    FROM {t}
+                    WHERE (%s = '' OR COALESCE(src_group, '') = %s)
+                      AND (%s = '' OR COALESCE(dest_group, '') = %s)
+                    GROUP BY src_group, dest_group, direction, result
+                    ORDER BY source_group, dest_group, hit_count DESC
+                    """,
+                    (source_group, source_group, dest_group, dest_group),
+                )
+                rows = cur.fetchall()
+                out = []
+                for r in rows:
+                    d = dict(r)
+                    if d.get("dest_ports") is None:
+                        d["dest_ports"] = []
+                    elif hasattr(d["dest_ports"], "tolist"):
+                        d["dest_ports"] = d["dest_ports"].tolist()
+                    out.append(d)
+                return out
+        except Exception as e:
+            logger.debug(f"Failed to get grouped rules from PostgreSQL: {e}")
+            return []
 
 

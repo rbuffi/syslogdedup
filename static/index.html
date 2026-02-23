@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firewall rules</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --border: #2d3a4d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-hover: #79b8ff;
+      --port-bg: #21262d;
+      --group-header: #238636;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 1rem 1.5rem;
+      min-height: 100vh;
+    }
+    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 1rem 0; }
+    .filters {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 1rem;
+    }
+    .filters label { display: flex; align-items: center; gap: 0.5rem; }
+    .filters select {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      min-width: 160px;
+    }
+    .filters select:focus { outline: none; border-color: var(--accent); }
+    .loading, .error { margin: 1rem 0; }
+    .error { color: #f85149; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    th, td {
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      background: var(--port-bg);
+      font-weight: 600;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      color: var(--muted);
+    }
+    tr.group-header td {
+      background: rgba(35, 134, 54, 0.15);
+      font-weight: 600;
+      border-top: 2px solid var(--group-header);
+    }
+    tr.group-header td:first-child { padding-left: 1rem; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover:not(.group-header) td { background: rgba(88, 166, 255, 0.06); }
+    .port-link {
+      display: inline-block;
+      background: var(--port-bg);
+      color: var(--accent);
+      padding: 0.2rem 0.5rem;
+      border-radius: 4px;
+      text-decoration: none;
+      font-variant-numeric: tabular-nums;
+      border: 1px solid var(--border);
+    }
+    .port-link:hover {
+      background: rgba(88, 166, 255, 0.15);
+      color: var(--accent-hover);
+      border-color: var(--accent);
+    }
+    .port-link:focus { outline: none; }
+    .hint { font-size: 0.85rem; color: var(--muted); margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <h1>Firewall rules</h1>
+  <div class="filters">
+    <label>
+      Source group
+      <select id="sourceGroup">
+        <option value="">All</option>
+      </select>
+    </label>
+    <label>
+      Dest group
+      <select id="destGroup">
+        <option value="">All</option>
+      </select>
+    </label>
+  </div>
+  <div id="loading" class="loading" style="display: none;">Loading…</div>
+  <div id="error" class="error" style="display: none;"></div>
+  <div id="tableWrap"></div>
+  <p class="hint">Ports are clickable for future NSX-T rule injection.</p>
+
+  <script>
+    const sourceSelect = document.getElementById('sourceGroup');
+    const destSelect = document.getElementById('destGroup');
+    const loadingEl = document.getElementById('loading');
+    const errorEl = document.getElementById('error');
+    const tableWrap = document.getElementById('tableWrap');
+
+    function showLoading(show) {
+      loadingEl.style.display = show ? 'block' : 'none';
+      if (show) errorEl.style.display = 'none';
+    }
+    function showError(msg) {
+      errorEl.textContent = msg;
+      errorEl.style.display = 'block';
+      tableWrap.innerHTML = '';
+    }
+    function clearError() {
+      errorEl.style.display = 'none';
+    }
+
+    async function loadGroups() {
+      try {
+        const r = await fetch('/api/groups');
+        if (!r.ok) throw new Error(r.statusText);
+        const data = await r.json();
+        const sg = data.source_groups || [];
+        const dg = data.dest_groups || [];
+        sourceSelect.innerHTML = '<option value="">All</option>' + sg.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)}</option>`).join('');
+        destSelect.innerHTML = '<option value="">All</option>' + dg.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)}</option>`).join('');
+      } catch (e) {
+        showError('Failed to load groups: ' + e.message);
+      }
+    }
+
+    function escapeAttr(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    }
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function loadRules() {
+      const sourceGroup = sourceSelect.value.trim();
+      const destGroup = destSelect.value.trim();
+      showLoading(true);
+      clearError();
+      try {
+        const params = new URLSearchParams();
+        if (sourceGroup) params.set('source_group', sourceGroup);
+        if (destGroup) params.set('dest_group', destGroup);
+        const r = await fetch('/api/rules?' + params.toString());
+        if (!r.ok) throw new Error(r.statusText);
+        const rows = await r.json();
+        renderTable(rows);
+      } catch (e) {
+        showError('Failed to load rules: ' + e.message);
+      } finally {
+        showLoading(false);
+      }
+    }
+
+    function onPortClick(e) {
+      e.preventDefault();
+      const a = e.target.closest('a');
+      if (!a) return;
+      const port = a.dataset.port;
+      const sourceGroup = a.dataset.sourceGroup || '';
+      const destGroup = a.dataset.destGroup || '';
+      // For later: call API to inject rule into NSX-T
+      console.log('Port click (NSX-T inject later):', { port, sourceGroup, destGroup });
+      alert('Port ' + port + ' selected.\nSource group: ' + (sourceGroup || '(any)') + '\nDest group: ' + (destGroup || '(any)') + '\n\nWire this to NSX-T rule injection when ready.');
+    }
+
+    function renderTable(rows) {
+      if (!rows.length) {
+        tableWrap.innerHTML = '<p class="hint">No rules match the selected filters.</p>';
+        return;
+      }
+      let lastSource = '';
+      let lastDest = '';
+      const trs = [];
+      for (const row of rows) {
+        const sg = row.source_group ?? '';
+        const dg = row.dest_group ?? '';
+        const isNewGroup = sg !== lastSource || dg !== lastDest;
+        if (isNewGroup) {
+          lastSource = sg;
+          lastDest = dg;
+          trs.push(
+            '<tr class="group-header"><td colspan="8">' +
+            escapeHtml(sg || '—') + ' → ' + escapeHtml(dg || '—') +
+            '</td></tr>'
+          );
+        }
+        const port = row.dest_port != null ? row.dest_port : '—';
+        const portCell = port !== '—'
+          ? '<a href="#" class="port-link" data-port="' + escapeAttr(port) + '" data-source-group="' + escapeAttr(sg) + '" data-dest-group="' + escapeAttr(dg) + '">' + escapeHtml(String(port)) + '</a>'
+          : '—';
+        trs.push(
+          '<tr>' +
+          '<td>' + escapeHtml(sg) + '</td>' +
+          '<td>' + escapeHtml(dg) + '</td>' +
+          '<td>' + portCell + '</td>' +
+          '<td>' + escapeHtml(row.src_ip ?? '') + '</td>' +
+          '<td>' + escapeHtml(row.dest_ip ?? '') + '</td>' +
+          '<td>' + escapeHtml(row.direction ?? '') + '</td>' +
+          '<td>' + escapeHtml(row.result ?? '') + '</td>' +
+          '<td>' + escapeHtml(String(row.hit_count ?? '')) + '</td>' +
+          '</tr>'
+        );
+      }
+      tableWrap.innerHTML =
+        '<table><thead><tr>' +
+        '<th>Source group</th><th>Dest group</th><th>Dest port</th>' +
+        '<th>Src IP</th><th>Dest IP</th><th>Direction</th><th>Result</th><th>Hit count</th>' +
+        '</tr></thead><tbody>' + trs.join('') + '</tbody></table>';
+      tableWrap.querySelectorAll('.port-link').forEach(el => el.addEventListener('click', onPortClick));
+    }
+
+    sourceSelect.addEventListener('change', loadRules);
+    destSelect.addEventListener('change', loadRules);
+
+    loadGroups().then(loadRules);
+  </script>
+</body>
+</html>

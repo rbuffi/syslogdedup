@@ -49,12 +49,20 @@ class PostgresConfig:
 
 
 @dataclass
+class WebConfig:
+    """Web UI / API server configuration."""
+    host: str = "0.0.0.0"
+    port: int = 8080
+
+
+@dataclass
 class Config:
     """Main configuration class."""
     syslog: SyslogConfig
     nsxt: NSXTConfig
     influx: InfluxConfig
     postgres: PostgresConfig
+    web: Optional[WebConfig] = None
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -125,27 +133,43 @@ def load_config(config_path: Optional[str] = None) -> Config:
         password=os.getenv('PG_PASSWORD', pg_cfg.get('password', '')),
         table=os.getenv('PG_TABLE', pg_cfg.get('table', 'flows')),
     )
+
+    web_cfg = config_data.get('web', {})
+    web_config = WebConfig(
+        host=os.getenv('WEB_HOST', web_cfg.get('host', '0.0.0.0')),
+        port=int(os.getenv('WEB_PORT', web_cfg.get('port', 8080))),
+    )
     
-    # Validate required fields
-    if not syslog_config.forward_host:
-        raise ValueError("SYSLOG_FORWARD_HOST or syslog.forward_host must be set")
-    if not nsxt_config.host:
-        raise ValueError("NSXT_HOST or nsxt.host must be set")
-    if not nsxt_config.username:
-        raise ValueError("NSXT_USERNAME or nsxt.username must be set")
-    if not nsxt_config.password:
-        raise ValueError("NSXT_PASSWORD or nsxt.password must be set")
+    web_only = os.getenv('WEB_ONLY', '').lower() == 'true'
+
+    # Validate required fields (skip syslog/nsxt when WEB_ONLY)
+    if not web_only:
+        if not syslog_config.forward_host:
+            raise ValueError("SYSLOG_FORWARD_HOST or syslog.forward_host must be set")
+        if not nsxt_config.host:
+            raise ValueError("NSXT_HOST or nsxt.host must be set")
+        if not nsxt_config.username:
+            raise ValueError("NSXT_USERNAME or nsxt.username must be set")
+        if not nsxt_config.password:
+            raise ValueError("NSXT_PASSWORD or nsxt.password must be set")
 
     # InfluxDB is optional: only validate database if enabled
     if influx_config.enabled and not influx_config.database:
         raise ValueError("INFLUX_DB or influx.database must be set when Influx is enabled")
 
-    # PostgreSQL is optional: only validate basic settings if enabled
-    if postgres_config.enabled:
+    # PostgreSQL: required when web_only; otherwise optional but validated if enabled
+    if web_only:
+        if not postgres_config.enabled:
+            raise ValueError("PG_ENABLED must be true when WEB_ONLY is true")
+        if not postgres_config.database:
+            raise ValueError("PG_DB or postgres.database must be set")
+        if not postgres_config.user:
+            raise ValueError("PG_USER or postgres.user must be set")
+    elif postgres_config.enabled:
         if not postgres_config.database:
             raise ValueError("PG_DB or postgres.database must be set when Postgres is enabled")
         if not postgres_config.user:
             raise ValueError("PG_USER or postgres.user must be set when Postgres is enabled")
     
-    return Config(syslog=syslog_config, nsxt=nsxt_config, influx=influx_config, postgres=postgres_config)
+    return Config(syslog=syslog_config, nsxt=nsxt_config, influx=influx_config, postgres=postgres_config, web=web_config)
 

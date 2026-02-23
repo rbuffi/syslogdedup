@@ -79,6 +79,9 @@ Alternatively, you can use environment variables:
 - `PG_USER` (required if Postgres enabled)
 - `PG_PASSWORD` (optional)
 - `PG_TABLE` (default: flows)
+- `WEB_ONLY` (set to `true` to run only the web UI, without syslog/NSXT config)
+- `WEB_HOST` (default: 0.0.0.0)
+- `WEB_PORT` (default: 8080)
 
 ## Usage
 
@@ -89,6 +92,17 @@ python main.py
 ```
 
 Note: Binding to port 514 typically requires root/sudo privileges on Linux systems.
+
+### Web UI (firewall rules)
+
+If PostgreSQL is enabled, you can run a read-only web UI to list firewall rules, filter by source/dest group, and use clickable ports for future NSX-T rule injection:
+
+```bash
+# With PG_* env or config set, and WEB_ONLY so syslog/NSXT are not required:
+WEB_ONLY=true uvicorn web:app --host 0.0.0.0 --port 8080
+```
+
+Open `http://localhost:8080/`. Use the dropdowns to filter by **Source group** and **Dest group**. Rules are grouped by (source_group, dest_group). Click a port to use it later for injecting rules into NSX-T Manager.
 
 ## Log Format
 
