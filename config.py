@@ -22,6 +22,7 @@ class NSXTConfig:
     password: str = ""
     verify_ssl: bool = True
     cache_ttl: int = 3600  # Cache TTL in seconds
+    # Optional: explicit Application section/domain identifiers can be added here later
 
 
 @dataclass

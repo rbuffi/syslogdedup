@@ -91,6 +91,112 @@
     }
     .port-link:focus { outline: none; }
     .hint { font-size: 0.85rem; color: var(--muted); margin-top: 0.5rem; }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.6);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal {
+      background: var(--surface);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      max-width: 520px;
+      width: 100%;
+      padding: 1rem 1.25rem 1.1rem;
+      box-shadow: 0 18px 45px rgba(0, 0, 0, 0.65);
+      color: var(--text);
+    }
+    .modal h2 {
+      margin: 0 0 0.5rem;
+      font-size: 1.05rem;
+    }
+    .modal .subheading {
+      margin: 0 0 0.75rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .modal-form {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem 0.9rem;
+      margin-top: 0.25rem;
+    }
+    .modal-form label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    .modal-form select {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.35rem 0.6rem;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+    .modal-form select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+    .modal-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 0.9rem;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .button-row {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+    .btn {
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      padding: 0.35rem 0.85rem;
+      font-size: 0.85rem;
+      cursor: pointer;
+      background: var(--port-bg);
+      color: var(--text);
+    }
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #0b1020;
+      font-weight: 600;
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+    .btn-ghost {
+      background: transparent;
+    }
+    .modal-status {
+      font-size: 0.8rem;
+    }
+    .modal-status.error {
+      color: #f85149;
+    }
+    .modal-status.ok {
+      color: var(--muted);
+    }
+    @media (max-width: 640px) {
+      .modal {
+        max-width: 100%;
+        margin: 0 0.75rem;
+      }
+      .modal-form {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
@@ -112,7 +218,48 @@
   <div id="loading" class="loading" style="display: none;">Loading…</div>
   <div id="error" class="error" style="display: none;"></div>
   <div id="tableWrap"></div>
-  <p class="hint">Ports are clickable for future NSX-T rule injection.</p>
+  <p class="hint">Click a port to open NSX-T rule creation for that source/destination pair.</p>
+
+  <div id="modalBackdrop" class="modal-backdrop">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ruleModalTitle">
+      <h2 id="ruleModalTitle">Create NSX-T firewall rule</h2>
+      <p class="subheading" id="ruleModalContext"></p>
+      <div class="modal-form">
+        <label>
+          Source group
+          <select id="ruleSourceGroup"></select>
+        </label>
+        <label>
+          Destination group
+          <select id="ruleDestGroup"></select>
+        </label>
+        <label>
+          Policy
+          <select id="rulePolicy"></select>
+        </label>
+        <label>
+          Direction
+          <select id="ruleDirection">
+            <option value="in">in</option>
+            <option value="out">out</option>
+            <option value="in/out">in/out</option>
+          </select>
+        </label>
+        <label>
+          Service
+          <select id="ruleService"></select>
+        </label>
+      </div>
+      <div class="modal-footer">
+        <div id="ruleStatus" class="modal-status ok"></div>
+        <div class="button-row">
+          <button type="button" class="btn btn-ghost" id="ruleCancelBtn">Cancel</button>
+          <button type="button" class="btn btn-primary" id="ruleSubmitBtn">Create rule (disabled)</button>
+        </div>
+      </div>
+      <div id="ruleError" class="modal-status error" style="display:none;"></div>
+    </div>
+  </div>
 
   <script>
     const sourceSelect = document.getElementById('sourceGroup');
@@ -120,6 +267,23 @@
     const loadingEl = document.getElementById('loading');
     const errorEl = document.getElementById('error');
     const tableWrap = document.getElementById('tableWrap');
+    const modalBackdrop = document.getElementById('modalBackdrop');
+    const ruleModalContext = document.getElementById('ruleModalContext');
+    const ruleSourceGroup = document.getElementById('ruleSourceGroup');
+    const ruleDestGroup = document.getElementById('ruleDestGroup');
+    const rulePolicy = document.getElementById('rulePolicy');
+    const ruleDirection = document.getElementById('ruleDirection');
+    const ruleService = document.getElementById('ruleService');
+    const ruleStatus = document.getElementById('ruleStatus');
+    const ruleError = document.getElementById('ruleError');
+    const ruleCancelBtn = document.getElementById('ruleCancelBtn');
+    const ruleSubmitBtn = document.getElementById('ruleSubmitBtn');
+
+    let allSourceGroups = [];
+    let allDestGroups = [];
+    let cachedPolicies = null;
+    let cachedServices = null;
+    let ruleContext = null;
 
     function showLoading(show) {
       loadingEl.style.display = show ? 'block' : 'none';
@@ -141,6 +305,8 @@
         const data = await r.json();
         const sg = data.source_groups || [];
         const dg = data.dest_groups || [];
+        allSourceGroups = sg.slice();
+        allDestGroups = dg.slice();
         sourceSelect.innerHTML = '<option value="">All</option>' + sg.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)}</option>`).join('');
         destSelect.innerHTML = '<option value="">All</option>' + dg.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)}</option>`).join('');
       } catch (e) {
@@ -182,9 +348,12 @@
       const port = a.dataset.port;
       const sourceGroup = a.dataset.sourceGroup || '';
       const destGroup = a.dataset.destGroup || '';
-      // For later: call API to inject rule into NSX-T
-      console.log('Port click (NSX-T inject later):', { port, sourceGroup, destGroup });
-      alert('Port ' + port + ' selected.\nSource group: ' + (sourceGroup || '(any)') + '\nDest group: ' + (destGroup || '(any)') + '\n\nWire this to NSX-T rule injection when ready.');
+      const srcIp = a.dataset.srcIp || '';
+      const destIp = a.dataset.destIp || '';
+      const direction = a.dataset.direction || '';
+      const protocol = a.dataset.protocol || '';
+      ruleContext = { port, sourceGroup, destGroup, srcIp, destIp, direction, protocol };
+      openRuleModal();
     }
 
     function renderTable(rows) {
@@ -210,7 +379,7 @@
         }
         const port = row.dest_port != null ? row.dest_port : '—';
         const portCell = port !== '—'
-          ? '<a href="#" class="port-link" data-port="' + escapeAttr(port) + '" data-source-group="' + escapeAttr(sg) + '" data-dest-group="' + escapeAttr(dg) + '">' + escapeHtml(String(port)) + '</a>'
+          ? '<a href="#" class="port-link" data-port="' + escapeAttr(port) + '" data-source-group="' + escapeAttr(sg) + '" data-dest-group="' + escapeAttr(dg) + '" data-src-ip="' + escapeAttr(row.src_ip ?? '') + '" data-dest-ip="' + escapeAttr(row.dest_ip ?? '') + '" data-direction="' + escapeAttr(row.direction ?? '') + '" data-protocol="' + escapeAttr(row.protocol ?? '') + '">' + escapeHtml(String(port)) + '</a>'
           : '—';
         trs.push(
           '<tr>' +
@@ -233,8 +402,182 @@
       tableWrap.querySelectorAll('.port-link').forEach(el => el.addEventListener('click', onPortClick));
     }
 
+    async function ensurePoliciesLoaded() {
+      if (cachedPolicies) return cachedPolicies;
+      try {
+        const r = await fetch('/api/nsx/policies');
+        if (!r.ok) throw new Error(r.statusText);
+        cachedPolicies = await r.json();
+      } catch (e) {
+        throw new Error('Failed to load NSX-T policies: ' + e.message);
+      }
+      return cachedPolicies;
+    }
+
+    async function ensureServicesLoaded() {
+      if (cachedServices) return cachedServices;
+      try {
+        const r = await fetch('/api/nsx/services');
+        if (!r.ok) throw new Error(r.statusText);
+        cachedServices = await r.json();
+      } catch (e) {
+        throw new Error('Failed to load NSX-T services: ' + e.message);
+      }
+      return cachedServices;
+    }
+
+    function openRuleModal() {
+      if (!ruleContext) return;
+      ruleError.style.display = 'none';
+      ruleError.textContent = '';
+      ruleStatus.textContent = 'Creating a disabled, logged rule in the Application section.';
+      ruleStatus.classList.remove('error');
+      ruleStatus.classList.add('ok');
+      const sgText = ruleContext.sourceGroup || '—';
+      const dgText = ruleContext.destGroup || '—';
+      const portText = ruleContext.port || '—';
+      ruleModalContext.textContent =
+        'Source: ' + sgText + '  →  Destination: ' + dgText + '  |  Port ' + portText;
+
+      const srcOptions = ['<option value="">(select)</option>']
+        .concat(allSourceGroups.map(g => '<option value="' + escapeAttr(g) + '">' + escapeHtml(g) + '</option>'));
+      const destOptions = ['<option value="">(select)</option>']
+        .concat(allDestGroups.map(g => '<option value="' + escapeAttr(g) + '">' + escapeHtml(g) + '</option>'));
+      ruleSourceGroup.innerHTML = srcOptions.join('');
+      ruleDestGroup.innerHTML = destOptions.join('');
+      if (ruleContext.sourceGroup && allSourceGroups.includes(ruleContext.sourceGroup)) {
+        ruleSourceGroup.value = ruleContext.sourceGroup;
+      }
+      if (ruleContext.destGroup && allDestGroups.includes(ruleContext.destGroup)) {
+        ruleDestGroup.value = ruleContext.destGroup;
+      }
+      ruleDirection.value = (ruleContext.direction || '').toLowerCase() === 'out' ? 'out'
+        : (ruleContext.direction || '').toLowerCase() === 'in/out' ? 'in/out'
+        : 'in';
+
+      rulePolicy.innerHTML = '<option value="">Loading…</option>';
+      ruleService.innerHTML = '<option value="">Loading…</option>';
+      modalBackdrop.style.display = 'flex';
+
+      ensurePoliciesLoaded()
+        .then(policies => {
+          if (!Array.isArray(policies) || !policies.length) {
+            rulePolicy.innerHTML = '<option value="">No Application policies found</option>';
+            return;
+          }
+          rulePolicy.innerHTML = policies
+            .map(p => '<option value="' + escapeAttr(p.id) + '">' + escapeHtml(p.name) + '</option>')
+            .join('');
+        })
+        .catch(e => {
+          rulePolicy.innerHTML = '<option value="">Failed to load policies</option>';
+          ruleError.textContent = e.message;
+          ruleError.style.display = 'block';
+        });
+
+      ensureServicesLoaded()
+        .then(services => {
+          if (!Array.isArray(services) || !services.length) {
+            ruleService.innerHTML = '<option value="">No services found</option>';
+            return;
+          }
+          ruleService.innerHTML = services
+            .map(s => {
+              const label = s.display || s.name || s.id;
+              return '<option value="' + escapeAttr(s.id) + '">' + escapeHtml(label) + '</option>';
+            })
+            .join('');
+
+          if (ruleContext.port && services.length) {
+            const portStr = String(ruleContext.port);
+            const proto = (ruleContext.protocol || '').toUpperCase();
+            const match = services.find(s => {
+              if (!Array.isArray(s.ports) || !s.ports.length) return false;
+              const pMatch = s.ports.includes(portStr);
+              if (!pMatch) return false;
+              if (!s.protocol || !proto) return pMatch;
+              return String(s.protocol).toUpperCase() === proto;
+            });
+            if (match) {
+              ruleService.value = match.id;
+            }
+          }
+        })
+        .catch(e => {
+          ruleService.innerHTML = '<option value="">Failed to load services</option>';
+          ruleError.textContent = e.message;
+          ruleError.style.display = 'block';
+        });
+    }
+
+    function closeRuleModal() {
+      modalBackdrop.style.display = 'none';
+      ruleContext = null;
+    }
+
+    async function submitRule() {
+      if (!ruleContext) return;
+      const sourceGroup = ruleSourceGroup.value.trim();
+      const destGroup = ruleDestGroup.value.trim();
+      const policyId = rulePolicy.value.trim();
+      const direction = ruleDirection.value.trim();
+      const serviceId = ruleService.value.trim();
+
+      ruleError.style.display = 'none';
+      ruleError.textContent = '';
+
+      if (!sourceGroup || !destGroup || !policyId || !direction || !serviceId) {
+        ruleError.textContent = 'Source group, destination group, policy, direction, and service are required.';
+        ruleError.style.display = 'block';
+        return;
+      }
+
+      ruleSubmitBtn.disabled = true;
+      ruleStatus.textContent = 'Creating rule…';
+      ruleStatus.classList.remove('error');
+      ruleStatus.classList.add('ok');
+
+      try {
+        const payload = {
+          source_group: sourceGroup,
+          dest_group: destGroup,
+          policy_id: policyId,
+          direction: direction,
+          service_id: serviceId,
+          port: ruleContext.port || null,
+          protocol: ruleContext.protocol || null
+        };
+        const r = await fetch('/api/nsx/rules', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (!r.ok) {
+          const text = await r.text();
+          throw new Error(text || r.statusText);
+        }
+        ruleStatus.textContent = 'Rule created in NSX-T (disabled, logging enabled).';
+        setTimeout(() => {
+          closeRuleModal();
+        }, 900);
+      } catch (e) {
+        ruleStatus.textContent = '';
+        ruleError.textContent = 'Failed to create rule: ' + e.message;
+        ruleError.style.display = 'block';
+      } finally {
+        ruleSubmitBtn.disabled = false;
+      }
+    }
+
     sourceSelect.addEventListener('change', loadRules);
     destSelect.addEventListener('change', loadRules);
+    ruleCancelBtn.addEventListener('click', closeRuleModal);
+    ruleSubmitBtn.addEventListener('click', submitRule);
+    modalBackdrop.addEventListener('click', (e) => {
+      if (e.target === modalBackdrop) {
+        closeRuleModal();
+      }
+    });
 
     loadGroups().then(loadRules);
   </script>

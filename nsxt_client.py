@@ -1,9 +1,12 @@
 """NSX-T Manager API client for IP-to-group lookups."""
 import logging
+import re
 import time
 from typing import Optional, Dict, List, Any, Tuple
+
 import requests
 from requests.auth import HTTPBasicAuth
+
 from config import NSXTConfig
 
 
@@ -555,4 +558,207 @@ class NSXTClient:
         """Clear the IP-to-group cache."""
         self._ip_cache.clear()
         self._cache_timestamps.clear()
+
+    # -------- NSX-T policy and rule helpers for UI --------
+
+    def list_application_policies(self) -> List[Dict[str, Any]]:
+        """
+        List security policies in the default domain that belong to the
+        Application section/category.
+
+        Returns a list of small dicts: {id, name, category}.
+        """
+        policies: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        page_size = 1000
+
+        try:
+            while True:
+                url = f"{self.base_url}/policy/api/v1/infra/domains/default/security-policies"
+                params: Dict[str, Any] = {"page_size": page_size}
+                if cursor:
+                    params["cursor"] = cursor
+
+                resp = self.session.get(url, params=params, timeout=15)
+                resp.raise_for_status()
+                data = resp.json()
+                results = data.get("results", []) or []
+                for p in results:
+                    category = p.get("category", "")
+                    if category.lower() != "application":
+                        continue
+                    pid = p.get("id") or ""
+                    if not pid:
+                        continue
+                    name = p.get("display_name") or pid
+                    policies.append(
+                        {
+                            "id": pid,
+                            "name": name,
+                            "category": category,
+                        }
+                    )
+
+                cursor = data.get("cursor")
+                if not cursor:
+                    break
+
+                time.sleep(0.05)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to list NSX-T policies: {e}")
+
+        return policies
+
+    def list_services(self) -> List[Dict[str, Any]]:
+        """
+        List L4 services defined in NSX-T Policy.
+
+        Returns a list of dicts:
+            {id, name, display, protocol, ports: [\"443\", ...]}
+        """
+        services: List[Dict[str, Any]] = []
+        cursor: Optional[str] = None
+        page_size = 1000
+
+        try:
+            while True:
+                url = f"{self.base_url}/policy/api/v1/infra/services"
+                params: Dict[str, Any] = {"page_size": page_size}
+                if cursor:
+                    params["cursor"] = cursor
+
+                resp = self.session.get(url, params=params, timeout=15)
+                resp.raise_for_status()
+                data = resp.json()
+                results = data.get("results", []) or []
+
+                for svc in results:
+                    sid = svc.get("id") or ""
+                    if not sid:
+                        continue
+                    display_name = svc.get("display_name") or sid
+                    service_entries = svc.get("service_entries") or []
+
+                    ports_set = set()
+                    protocol = None
+                    for entry in service_entries:
+                        entry_ports = entry.get("destination_ports") or []
+                        for p in entry_ports:
+                            ports_set.add(str(p))
+                        proto = entry.get("l4_protocol")
+                        if proto and not protocol:
+                            protocol = proto
+
+                    services.append(
+                        {
+                            "id": sid,
+                            "name": display_name,
+                            "display": display_name,
+                            "protocol": protocol,
+                            "ports": sorted(ports_set),
+                        }
+                    )
+
+                cursor = data.get("cursor")
+                if not cursor:
+                    break
+
+                time.sleep(0.05)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to list NSX-T services: {e}")
+
+        return services
+
+    def _group_name_to_path(self, name: str) -> Optional[str]:
+        """
+        Resolve a human-friendly group name (as shown in the UI) back to the
+        NSX-T Policy group path using the cached groups.
+        """
+        if not name:
+            return None
+
+        self._refresh_groups_if_needed()
+        for detail in self._groups:
+            if self._extract_group_name(detail) == name:
+                path = detail.get("path") or ""
+                if path:
+                    return path
+        return None
+
+    def _sanitize_id(self, value: str) -> str:
+        """
+        Turn an arbitrary name into a safe NSX-T Policy object id.
+        """
+        if not value:
+            return "rule-auto"
+        v = value.strip().lower()
+        v = re.sub(r"[^a-z0-9]+", "-", v)
+        v = v.strip("-")
+        return v or "rule-auto"
+
+    def create_firewall_rule(
+        self,
+        *,
+        policy_id: str,
+        rule_name: str,
+        direction: str,
+        source_group_names: List[str],
+        dest_group_names: List[str],
+        applied_to_group_names: List[str],
+        service_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Create a distributed firewall rule under the given security policy.
+
+        The rule is always created disabled and with logging enabled.
+        """
+        if not policy_id:
+            raise ValueError("policy_id is required")
+        if not service_id:
+            raise ValueError("service_id is required")
+
+        src_paths = [
+            self._group_name_to_path(n) for n in source_group_names if n
+        ]
+        dst_paths = [
+            self._group_name_to_path(n) for n in dest_group_names if n
+        ]
+        applied_paths = [
+            self._group_name_to_path(n) for n in applied_to_group_names if n
+        ]
+
+        if not all(src_paths):
+            raise ValueError("Failed to resolve all source groups to NSX paths")
+        if not all(dst_paths):
+            raise ValueError("Failed to resolve all destination groups to NSX paths")
+        if not all(applied_paths):
+            raise ValueError("Failed to resolve all applied-to groups to NSX paths")
+
+        service_path = f"/infra/services/{service_id}"
+
+        rule_id = self._sanitize_id(rule_name)
+        url = (
+            f"{self.base_url}/policy/api/v1/infra/domains/default/"
+            f"security-policies/{policy_id}/rules/{rule_id}"
+        )
+
+        payload: Dict[str, Any] = {
+            "display_name": rule_name,
+            "disabled": True,  # create deactivated
+            "logged": True,  # enable logging
+            "source_groups": src_paths,
+            "destination_groups": dst_paths,
+            "services": [service_path],
+            "direction": direction,
+            "scope": applied_paths,
+            "action": "ALLOW",
+        }
+
+        try:
+            resp = self.session.put(url, json=payload, timeout=20)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to create NSX-T firewall rule: {e}")
+            raise
 
