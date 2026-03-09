@@ -1,6 +1,7 @@
 """Web API and UI for listing firewall rules (read-only). Run with: WEB_ONLY=true uvicorn web:app --host 0.0.0.0 --port 8080"""
 import os
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
