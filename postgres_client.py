@@ -132,11 +132,28 @@ class PostgresClient:
             return False
 
     def _ensure_conn(self) -> bool:
-        """Ensure we have a connection (for read-only use when enabled later)."""
+        """Ensure we have a live connection suitable for read APIs."""
         if not self.config.enabled:
             return False
-        if not self.conn:
+
+        # Establish initial connection if needed
+        if self.conn is None:
             self._connect()
+
+        # Reconnect if connection object exists but is closed
+        if self.conn is not None and getattr(self.conn, "closed", 0):
+            logger.info("PostgreSQL connection was closed; reconnecting")
+            self._connect()
+
+        # Lightweight health check; if it fails, reconnect once
+        if self.conn is not None:
+            try:
+                with self.conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+            except Exception:
+                logger.info("PostgreSQL connection unhealthy; reconnecting")
+                self._connect()
+
         return self.conn is not None
 
     def get_groups(self) -> Dict[str, List[str]]:
