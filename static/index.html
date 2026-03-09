@@ -228,6 +228,7 @@
   <div id="loading" class="loading" style="display: none;">Loading…</div>
   <div id="error" class="error" style="display: none;"></div>
   <div id="tableWrap"></div>
+  <div id="detailsWrap" class="hint"></div>
   <p class="hint">Click a port to open NSX-T rule creation for that source/destination pair.</p>
 
   <div id="modalBackdrop" class="modal-backdrop">
@@ -278,6 +279,7 @@
     const loadingEl = document.getElementById('loading');
     const errorEl = document.getElementById('error');
     const tableWrap = document.getElementById('tableWrap');
+    const detailsWrap = document.getElementById('detailsWrap');
     const modalBackdrop = document.getElementById('modalBackdrop');
     const ruleModalContext = document.getElementById('ruleModalContext');
     const ruleSourceGroup = document.getElementById('ruleSourceGroup');
@@ -304,6 +306,7 @@
       errorEl.textContent = msg;
       errorEl.style.display = 'block';
       tableWrap.innerHTML = '';
+      detailsWrap.innerHTML = '';
     }
     function clearError() {
       errorEl.style.display = 'none';
@@ -338,15 +341,16 @@
       const hours = parseInt(hoursSelect.value || '0', 10) || 0;
       showLoading(true);
       clearError();
+      detailsWrap.innerHTML = '';
       try {
         const params = new URLSearchParams();
         if (sourceGroup) params.set('source_group', sourceGroup);
         if (destGroup) params.set('dest_group', destGroup);
         if (hours > 0) params.set('hours', String(hours));
-        const r = await fetch('/api/rules?' + params.toString());
+        const r = await fetch('/api/rules/grouped?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
-        renderTable(rows);
+        renderGroupedTable(rows);
       } catch (e) {
         showError('Failed to load rules: ' + e.message);
       } finally {
@@ -369,9 +373,10 @@
       openRuleModal();
     }
 
-    function renderTable(rows) {
+    function renderTable(rows, target) {
+      const container = target || tableWrap;
       if (!rows.length) {
-        tableWrap.innerHTML = '<p class="hint">No rules match the selected filters.</p>';
+        container.innerHTML = '<p class="hint">No rules match the selected filters.</p>';
         return;
       }
       let lastSource = '';
@@ -407,12 +412,12 @@
           '</tr>'
         );
       }
-      tableWrap.innerHTML =
+      container.innerHTML =
         '<table><thead><tr>' +
         '<th>Source group</th><th>Dest group</th><th>Dest port</th>' +
         '<th>Src IP</th><th>Dest IP</th><th>Direction</th><th>Result</th><th>Hit count</th>' +
         '</tr></thead><tbody>' + trs.join('') + '</tbody></table>';
-      tableWrap.querySelectorAll('.port-link').forEach(el => el.addEventListener('click', onPortClick));
+      container.querySelectorAll('.port-link').forEach(el => el.addEventListener('click', onPortClick));
     }
 
     async function ensurePoliciesLoaded() {
@@ -437,6 +442,73 @@
         throw new Error('Failed to load NSX-T services: ' + e.message);
       }
       return cachedServices;
+    }
+
+    function renderGroupedTable(rows) {
+      if (!rows.length) {
+        tableWrap.innerHTML = '<p class="hint">No rules match the selected filters.</p>';
+        detailsWrap.innerHTML = '';
+        return;
+      }
+      const trs = [];
+      for (const row of rows) {
+        const sg = row.source_group ?? '';
+        const dg = row.dest_group ?? '';
+        const ports = Array.isArray(row.dest_ports) ? row.dest_ports : [];
+        const portsSummary = ports.length === 0
+          ? '—'
+          : (ports.length <= 10
+              ? ports.join(', ')
+              : ports.slice(0, 10).join(', ') + `, +${ports.length - 10} more`);
+        const hitCount = row.hit_count ?? '';
+        const direction = row.direction ?? '';
+        const result = row.result ?? '';
+        trs.push(
+          '<tr>' +
+          '<td>' + escapeHtml(sg) + '</td>' +
+          '<td>' + escapeHtml(dg) + '</td>' +
+          '<td>' + escapeHtml(portsSummary) + '</td>' +
+          '<td>' + escapeHtml(direction) + '</td>' +
+          '<td>' + escapeHtml(result) + '</td>' +
+          '<td>' + escapeHtml(String(hitCount)) + '</td>' +
+          '<td><button type="button" class="btn btn-ghost" data-sg="' + escapeAttr(sg) + '" data-dg="' + escapeAttr(dg) + '">Details</button></td>' +
+          '</tr>'
+        );
+      }
+      tableWrap.innerHTML =
+        '<table><thead><tr>' +
+        '<th>Source group</th><th>Dest group</th><th>Dest ports</th>' +
+        '<th>Direction</th><th>Result</th><th>Hit count</th><th></th>' +
+        '</tr></thead><tbody>' + trs.join('') + '</tbody></table>';
+
+      tableWrap.querySelectorAll('button[data-sg]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const sg = btn.getAttribute('data-sg') || '';
+          const dg = btn.getAttribute('data-dg') || '';
+          loadDetailsForPair(sg, dg);
+        });
+      });
+    }
+
+    async function loadDetailsForPair(sg, dg) {
+      const hours = parseInt(hoursSelect.value || '0', 10) || 0;
+      showLoading(true);
+      clearError();
+      try {
+        const params = new URLSearchParams();
+        if (sg) params.set('source_group', sg);
+        if (dg) params.set('dest_group', dg);
+        if (hours > 0) params.set('hours', String(hours));
+        const r = await fetch('/api/rules?' + params.toString());
+        if (!r.ok) throw new Error(r.statusText);
+        const rows = await r.json();
+        detailsWrap.innerHTML = '<p class="hint">Details for ' + escapeHtml(sg || '—') + ' → ' + escapeHtml(dg || '—') + ' (max ' + rows.length + ' flows)</p>';
+        renderTable(rows, detailsWrap);
+      } catch (e) {
+        showError('Failed to load details: ' + e.message);
+      } finally {
+        showLoading(false);
+      }
     }
 
     function openRuleModal() {

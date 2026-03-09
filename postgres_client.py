@@ -260,6 +260,7 @@ class PostgresClient:
                       AND (%s = 0 OR ts >= NOW() - make_interval(hours => %s))
                     GROUP BY src_group, dest_group, direction, result
                     ORDER BY source_group, dest_group, hit_count DESC
+                    LIMIT 1000
                     """,
                     (source_group, source_group, dest_group, dest_group, hours, hours),
                 )
