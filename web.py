@@ -42,18 +42,28 @@ def api_groups():
 def api_rules(
     source_group: str = Query("", description="Filter by source group"),
     dest_group: str = Query("", description="Filter by dest group"),
+    hours: int = Query(0, ge=0, description="Only include rules from the last N hours; 0 = all time"),
 ):
     """Flat list of rules; optional filter by source_group, dest_group."""
-    return pg.get_rules(source_group=source_group or None, dest_group=dest_group or None)
+    return pg.get_rules(
+        source_group=source_group or None,
+        dest_group=dest_group or None,
+        hours=hours or 0,
+    )
 
 
 @app.get("/api/rules/grouped")
 def api_rules_grouped(
     source_group: str = Query("", description="Filter by source group"),
     dest_group: str = Query("", description="Filter by dest group"),
+    hours: int = Query(0, ge=0, description="Only include rules from the last N hours; 0 = all time"),
 ):
     """Rules grouped by (source_group, dest_group) with aggregated dest_ports."""
-    return pg.get_rules_grouped(source_group=source_group or None, dest_group=dest_group or None)
+    return pg.get_rules_grouped(
+        source_group=source_group or None,
+        dest_group=dest_group or None,
+        hours=hours or 0,
+    )
 
 
 class CreateRuleRequest(BaseModel):

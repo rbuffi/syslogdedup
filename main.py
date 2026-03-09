@@ -19,13 +19,17 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 
-# Add a file logger specifically for NSX group debugging
+# Dedicated file logger for NSX lookup failures.
+# This file should contain only the raw syslog line and the reason why group
+# resolution failed, one entry per failed item.
 _nsx_file_handler = logging.FileHandler("nsx_groups.log")
-_nsx_file_handler.setLevel(logging.DEBUG)
+_nsx_file_handler.setLevel(logging.WARNING)
 _nsx_file_handler.setFormatter(
-    logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
 )
-logging.getLogger("nsxt_client").addHandler(_nsx_file_handler)
+nsx_failure_logger = logging.getLogger("nsx_group_failures")
+nsx_failure_logger.setLevel(logging.WARNING)
+nsx_failure_logger.addHandler(_nsx_file_handler)
 
 logger = logging.getLogger(__name__)
 
@@ -109,14 +113,25 @@ class SyslogServer:
             if source_groups is not None and len(source_groups) == 0:
                 source_groups = None
         except Exception as e:
-            logger.warning(f"Failed to lookup source IP {parsed_log.source_ip} in NSX-T: {e}")
+            # Log to dedicated NSX groups file with raw syslog line and reason
+            nsx_failure_logger.warning(
+                "NSX group lookup failed for source_ip=%s; reason=%s; raw_syslog=%r",
+                parsed_log.source_ip,
+                e,
+                raw_line,
+            )
         
         try:
             dest_groups = self.nsxt_client.lookup_ip_groups(parsed_log.dest_ip)
             if dest_groups is not None and len(dest_groups) == 0:
                 dest_groups = None
         except Exception as e:
-            logger.warning(f"Failed to lookup destination IP {parsed_log.dest_ip} in NSX-T: {e}")
+            nsx_failure_logger.warning(
+                "NSX group lookup failed for dest_ip=%s; reason=%s; raw_syslog=%r",
+                parsed_log.dest_ip,
+                e,
+                raw_line,
+            )
         
         # Forward the enriched log, but keep the original syslog header/line
         if self.forwarder.forward(parsed_log, source_groups, dest_groups, raw_line=raw_line):

@@ -190,6 +190,7 @@ class PostgresClient:
         self,
         source_group: Optional[str] = None,
         dest_group: Optional[str] = None,
+        hours: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Return flat list of rules with optional filter by source_group, dest_group."""
         if not self._ensure_conn():
@@ -197,6 +198,7 @@ class PostgresClient:
         t = self.config.table
         source_group = (source_group or "").strip()
         dest_group = (dest_group or "").strip()
+        hours = int(hours or 0)
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -216,9 +218,10 @@ class PostgresClient:
                     FROM {t}
                     WHERE (%s = '' OR COALESCE(src_group, '') = %s)
                       AND (%s = '' OR COALESCE(dest_group, '') = %s)
+                      AND (%s = 0 OR ts >= NOW() - make_interval(hours => %s))
                     ORDER BY src_group, dest_group, hit_count DESC, dest_port
                     """,
-                    (source_group, source_group, dest_group, dest_group),
+                    (source_group, source_group, dest_group, dest_group, hours, hours),
                 )
                 rows = cur.fetchall()
                 return [dict(r) for r in rows]
@@ -230,6 +233,7 @@ class PostgresClient:
         self,
         source_group: Optional[str] = None,
         dest_group: Optional[str] = None,
+        hours: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """Return rules grouped by (source_group, dest_group) with aggregated dest_ports."""
         if not self._ensure_conn():
@@ -237,6 +241,7 @@ class PostgresClient:
         t = self.config.table
         source_group = (source_group or "").strip()
         dest_group = (dest_group or "").strip()
+        hours = int(hours or 0)
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -252,10 +257,11 @@ class PostgresClient:
                     FROM {t}
                     WHERE (%s = '' OR COALESCE(src_group, '') = %s)
                       AND (%s = '' OR COALESCE(dest_group, '') = %s)
+                      AND (%s = 0 OR ts >= NOW() - make_interval(hours => %s))
                     GROUP BY src_group, dest_group, direction, result
                     ORDER BY source_group, dest_group, hit_count DESC
                     """,
-                    (source_group, source_group, dest_group, dest_group),
+                    (source_group, source_group, dest_group, dest_group, hours, hours),
                 )
                 rows = cur.fetchall()
                 out = []
