@@ -86,6 +86,8 @@ class CreateRuleRequest(BaseModel):
     service_id: str
     port: Optional[int] = None
     protocol: Optional[str] = None
+    comment: Optional[str] = None
+    policy_name: Optional[str] = None
 
 
 @app.get("/api/nsx/policies")
@@ -125,8 +127,10 @@ def api_nsx_create_rule(req: CreateRuleRequest):
     source_group = (req.source_group or "").strip()
     dest_group = (req.dest_group or "").strip()
     policy_id = (req.policy_id or "").strip()
+    policy_name = (req.policy_name or "").strip()
     direction_raw = (req.direction or "").strip().lower()
     service_id = (req.service_id or "").strip()
+    comment = (req.comment or "").strip()
 
     if not source_group or not dest_group or not policy_id or not direction_raw or not service_id:
         raise HTTPException(status_code=400, detail="source_group, dest_group, policy_id, direction, and service_id are required")
@@ -158,6 +162,7 @@ def api_nsx_create_rule(req: CreateRuleRequest):
         service_name = service_id
 
     rule_name = f"{source_group}_{dest_group}_{service_name}_{direction_raw}"
+    label = f"{policy_name}_{rule_name}" if policy_name else rule_name
 
     try:
         result = nsxt.create_firewall_rule(
@@ -168,6 +173,8 @@ def api_nsx_create_rule(req: CreateRuleRequest):
             dest_group_names=[dest_group],
             applied_to_group_names=applied_to,
             service_id=service_id,
+            description=comment or None,
+            label=label,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

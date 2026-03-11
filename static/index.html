@@ -272,6 +272,10 @@
           Service
           <select id="ruleService"></select>
         </label>
+        <label>
+          Comment
+          <input id="ruleComment" type="text" placeholder="Why this rule is needed…" />
+        </label>
       </div>
       <div class="modal-footer">
         <div id="ruleStatus" class="modal-status ok"></div>
@@ -302,6 +306,7 @@
     const rulePolicy = document.getElementById('rulePolicy');
     const ruleDirection = document.getElementById('ruleDirection');
     const ruleService = document.getElementById('ruleService');
+    const ruleComment = document.getElementById('ruleComment');
     const ruleStatus = document.getElementById('ruleStatus');
     const ruleError = document.getElementById('ruleError');
     const ruleCancelBtn = document.getElementById('ruleCancelBtn');
@@ -640,6 +645,7 @@
       const policyId = rulePolicy.value.trim();
       const direction = ruleDirection.value.trim();
       const serviceId = ruleService.value.trim();
+      const comment = ruleComment.value.trim();
 
       ruleError.style.display = 'none';
       ruleError.textContent = '';
@@ -656,14 +662,24 @@
       ruleStatus.classList.add('ok');
 
       try {
+        // Derive policy name from cached policies for label construction on backend
+        let policyName = policyId;
+        if (Array.isArray(cachedPolicies)) {
+          const match = cachedPolicies.find(p => p.id === policyId);
+          if (match) {
+            policyName = match.name || policyName;
+          }
+        }
         const payload = {
           source_group: sourceGroup,
           dest_group: destGroup,
           policy_id: policyId,
+          policy_name: policyName,
           direction: direction,
           service_id: serviceId,
           port: ruleContext.port || null,
-          protocol: ruleContext.protocol || null
+          protocol: ruleContext.protocol || null,
+          comment: comment || null
         };
         const r = await fetch('/api/nsx/rules', {
           method: 'POST',

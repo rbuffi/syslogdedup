@@ -706,6 +706,8 @@ class NSXTClient:
         dest_group_names: List[str],
         applied_to_group_names: List[str],
         service_id: str,
+        description: Optional[str] = None,
+        label: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Create a distributed firewall rule under the given security policy.
@@ -753,6 +755,14 @@ class NSXTClient:
             "scope": applied_paths,
             "action": "ALLOW",
         }
+        if description:
+            payload["description"] = description
+
+        tags: List[Dict[str, Any]] = []
+        if label:
+            tags.append({"scope": "label", "tag": label})
+        if tags:
+            payload["tags"] = tags
 
         try:
             resp = self.session.put(url, json=payload, timeout=20)
