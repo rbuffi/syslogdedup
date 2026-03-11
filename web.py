@@ -43,12 +43,18 @@ def api_rules(
     source_group: str = Query("", description="Filter by source group"),
     dest_group: str = Query("", description="Filter by dest group"),
     hours: int = Query(0, ge=0, description="Only include rules from the last N hours; 0 = all time"),
+    src_ip: str = Query("", description="Filter by source IP (substring match)"),
+    dest_ip: str = Query("", description="Filter by dest IP (substring match)"),
+    dest_port: str = Query("", description="Filter by destination port (text)"),
 ):
     """Flat list of rules; optional filter by source_group, dest_group."""
     return pg.get_rules(
         source_group=source_group or None,
         dest_group=dest_group or None,
         hours=hours or 0,
+        src_ip=src_ip or None,
+        dest_ip=dest_ip or None,
+        dest_port=dest_port or None,
     )
 
 
@@ -57,12 +63,18 @@ def api_rules_grouped(
     source_group: str = Query("", description="Filter by source group"),
     dest_group: str = Query("", description="Filter by dest group"),
     hours: int = Query(0, ge=0, description="Only include rules from the last N hours; 0 = all time"),
+    src_ip: str = Query("", description="Filter by source IP (substring match)"),
+    dest_ip: str = Query("", description="Filter by dest IP (substring match)"),
+    dest_port: str = Query("", description="Filter by destination port (text)"),
 ):
     """Rules grouped by (source_group, dest_group) with aggregated dest_ports."""
     return pg.get_rules_grouped(
         source_group=source_group or None,
         dest_group=dest_group or None,
         hours=hours or 0,
+        src_ip=src_ip or None,
+        dest_ip=dest_ip or None,
+        dest_port=dest_port or None,
     )
 
 

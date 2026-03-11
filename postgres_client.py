@@ -191,6 +191,9 @@ class PostgresClient:
         source_group: Optional[str] = None,
         dest_group: Optional[str] = None,
         hours: Optional[int] = None,
+        src_ip: Optional[str] = None,
+        dest_ip: Optional[str] = None,
+        dest_port: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return flat list of rules with optional filter by source_group, dest_group."""
         if not self._ensure_conn():
@@ -199,6 +202,9 @@ class PostgresClient:
         source_group = (source_group or "").strip()
         dest_group = (dest_group or "").strip()
         hours = int(hours or 0)
+        src_ip = (src_ip or "").strip()
+        dest_ip = (dest_ip or "").strip()
+        dest_port = (dest_port or "").strip()
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -219,9 +225,26 @@ class PostgresClient:
                     WHERE (%s = '' OR COALESCE(src_group, '') = %s)
                       AND (%s = '' OR COALESCE(dest_group, '') = %s)
                       AND (%s = 0 OR ts >= NOW() - make_interval(hours => %s))
-                    ORDER BY src_group, dest_group, hit_count DESC, dest_port
+                      AND (%s = '' OR src_ip ILIKE '%%' || %s || '%%')
+                      AND (%s = '' OR dest_ip ILIKE '%%' || %s || '%%')
+                      AND (%s = '' OR CAST(dest_port AS TEXT) = %s)
+                    ORDER BY hit_count DESC, dest_port
+                    LIMIT 500
                     """,
-                    (source_group, source_group, dest_group, dest_group, hours, hours),
+                    (
+                        source_group,
+                        source_group,
+                        dest_group,
+                        dest_group,
+                        hours,
+                        hours,
+                        src_ip,
+                        src_ip,
+                        dest_ip,
+                        dest_ip,
+                        dest_port,
+                        dest_port,
+                    ),
                 )
                 rows = cur.fetchall()
                 return [dict(r) for r in rows]
@@ -234,6 +257,9 @@ class PostgresClient:
         source_group: Optional[str] = None,
         dest_group: Optional[str] = None,
         hours: Optional[int] = None,
+        src_ip: Optional[str] = None,
+        dest_ip: Optional[str] = None,
+        dest_port: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return rules grouped by (source_group, dest_group) with aggregated dest_ports."""
         if not self._ensure_conn():
@@ -242,6 +268,9 @@ class PostgresClient:
         source_group = (source_group or "").strip()
         dest_group = (dest_group or "").strip()
         hours = int(hours or 0)
+        src_ip = (src_ip or "").strip()
+        dest_ip = (dest_ip or "").strip()
+        dest_port = (dest_port or "").strip()
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -258,11 +287,27 @@ class PostgresClient:
                     WHERE (%s = '' OR COALESCE(src_group, '') = %s)
                       AND (%s = '' OR COALESCE(dest_group, '') = %s)
                       AND (%s = 0 OR ts >= NOW() - make_interval(hours => %s))
+                      AND (%s = '' OR src_ip ILIKE '%%' || %s || '%%')
+                      AND (%s = '' OR dest_ip ILIKE '%%' || %s || '%%')
+                      AND (%s = '' OR CAST(dest_port AS TEXT) = %s)
                     GROUP BY src_group, dest_group, direction, result
-                    ORDER BY source_group, dest_group, hit_count DESC
-                    LIMIT 1000
+                    ORDER BY hit_count DESC, source_group, dest_group
+                    LIMIT 200
                     """,
-                    (source_group, source_group, dest_group, dest_group, hours, hours),
+                    (
+                        source_group,
+                        source_group,
+                        dest_group,
+                        dest_group,
+                        hours,
+                        hours,
+                        src_ip,
+                        src_ip,
+                        dest_ip,
+                        dest_ip,
+                        dest_port,
+                        dest_port,
+                    ),
                 )
                 rows = cur.fetchall()
                 out = []

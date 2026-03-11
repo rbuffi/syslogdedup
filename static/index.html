@@ -215,6 +215,18 @@
       </select>
     </label>
     <label>
+      Src IP
+      <input id="srcIpFilter" type="text" placeholder="contains…" />
+    </label>
+    <label>
+      Dest IP
+      <input id="destIpFilter" type="text" placeholder="contains…" />
+    </label>
+    <label>
+      Port
+      <input id="portFilter" type="text" placeholder="e.g. 443" />
+    </label>
+    <label>
       From
       <select id="hoursSelect">
         <option value="0" selected>All time</option>
@@ -276,6 +288,9 @@
     const sourceSelect = document.getElementById('sourceGroup');
     const destSelect = document.getElementById('destGroup');
     const hoursSelect = document.getElementById('hoursSelect');
+    const srcIpFilter = document.getElementById('srcIpFilter');
+    const destIpFilter = document.getElementById('destIpFilter');
+    const portFilter = document.getElementById('portFilter');
     const loadingEl = document.getElementById('loading');
     const errorEl = document.getElementById('error');
     const tableWrap = document.getElementById('tableWrap');
@@ -339,6 +354,15 @@
       const sourceGroup = sourceSelect.value.trim();
       const destGroup = destSelect.value.trim();
       const hours = parseInt(hoursSelect.value || '0', 10) || 0;
+      const srcIp = srcIpFilter.value.trim();
+      const destIp = destIpFilter.value.trim();
+      const port = portFilter.value.trim();
+      // Require at least some filter to avoid huge unbounded queries
+      if (!sourceGroup && !destGroup && hours === 0 && !srcIp && !destIp && !port) {
+        tableWrap.innerHTML = '<p class="hint">Select a group, IP, port, or time window, then adjust filters to load data.</p>';
+        detailsWrap.innerHTML = '';
+        return;
+      }
       showLoading(true);
       clearError();
       detailsWrap.innerHTML = '';
@@ -347,6 +371,9 @@
         if (sourceGroup) params.set('source_group', sourceGroup);
         if (destGroup) params.set('dest_group', destGroup);
         if (hours > 0) params.set('hours', String(hours));
+        if (srcIp) params.set('src_ip', srcIp);
+        if (destIp) params.set('dest_ip', destIp);
+        if (port) params.set('dest_port', port);
         const r = await fetch('/api/rules/grouped?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
@@ -492,6 +519,9 @@
 
     async function loadDetailsForPair(sg, dg) {
       const hours = parseInt(hoursSelect.value || '0', 10) || 0;
+      const srcIp = srcIpFilter.value.trim();
+      const destIp = destIpFilter.value.trim();
+      const port = portFilter.value.trim();
       showLoading(true);
       clearError();
       try {
@@ -499,6 +529,9 @@
         if (sg) params.set('source_group', sg);
         if (dg) params.set('dest_group', dg);
         if (hours > 0) params.set('hours', String(hours));
+        if (srcIp) params.set('src_ip', srcIp);
+        if (destIp) params.set('dest_ip', destIp);
+        if (port) params.set('dest_port', port);
         const r = await fetch('/api/rules?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
@@ -657,6 +690,9 @@
     sourceSelect.addEventListener('change', loadRules);
     destSelect.addEventListener('change', loadRules);
     hoursSelect.addEventListener('change', loadRules);
+    srcIpFilter.addEventListener('change', loadRules);
+    destIpFilter.addEventListener('change', loadRules);
+    portFilter.addEventListener('change', loadRules);
     ruleCancelBtn.addEventListener('click', closeRuleModal);
     ruleSubmitBtn.addEventListener('click', submitRule);
     modalBackdrop.addEventListener('click', (e) => {
@@ -665,7 +701,7 @@
       }
     });
 
-    loadGroups().then(loadRules);
+    loadGroups();
   </script>
 </body>
 </html>
