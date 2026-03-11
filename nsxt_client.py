@@ -747,7 +747,7 @@ class NSXTClient:
         payload: Dict[str, Any] = {
             "display_name": rule_name,
             "disabled": True,  # create deactivated
-            "logged": True,  # enable logging
+            "logged": True,  # enable packet logging
             "source_groups": src_paths,
             "destination_groups": dst_paths,
             "services": [service_path],
@@ -755,13 +755,17 @@ class NSXTClient:
             "scope": applied_paths,
             "action": "ALLOW",
         }
+        # Long-form description for config / UI
         if description:
             payload["description"] = description
 
+        # Use policyname_rulename as "tag" (shown in CLI/logs) and also
+        # add a structured Tag entry for API consumers.
+        if label:
+            payload["tag"] = label  # printed in CLI and packet logs
+
         tags: List[Dict[str, Any]] = []
         if label:
-            # Use policyname_rulename as both log label and a searchable tag
-            payload["log_label"] = label
             tags.append({"scope": "label", "tag": label})
         if tags:
             payload["tags"] = tags
