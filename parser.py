@@ -40,6 +40,20 @@ class LogParser:
         r'(\S+)/(\d+)->(\S+)/(\d+)\s+'  # source_ip/port->dest_ip/port
         r'(.+)$'      # rule_name (rest of the line)
     )
+    # Some TERM logs omit the size field and include extra counters after the ports, e.g.:
+    # 6be61891 INET TERM PASS 5112 IN UDP 10.222.22.1/62824->10.222.29.255/1947 1/0 68/0 SZ-...
+    LOG_PATTERN_TERM = re.compile(
+        r'^(\S+)\s+'  # timestamp/id
+        r'(\S+)\s+'   # network_type (INET)
+        r'(\S+)\s+'   # action (TERM)
+        r'(\S+)\s+'   # result (PASS)
+        r'(\S+)\s+'   # rule_id
+        r'(\S+)\s+'   # direction (IN/OUT)
+        r'(\S+)\s+'   # protocol (UDP/TCP)
+        r'(\S+)/(\d+)->(\S+)/(\d+)'  # source_ip/port->dest_ip/port
+        r'(?:\s+\S+/\S+\s+\S+/\S+)?'  # optional extra counters like "1/0 68/0"
+        r'\s+(.+)$'   # rule_name (rest of the line)
+    )
     
     @staticmethod
     def parse(log_line: str) -> Optional[ParsedLog]:
@@ -59,28 +73,52 @@ class LogParser:
         # the firewall-specific part (header stripping is done in main.py).
         log_line = log_line.strip()
 
+        # First try the full pattern (with size field)
         match = LogParser.LOG_PATTERN.match(log_line)
-        if not match:
-            return None
-        
-        try:
-            return ParsedLog(
-                timestamp_id=match.group(1),
-                network_type=match.group(2),
-                action=match.group(3),
-                result=match.group(4),
-                rule_id=match.group(5),
-                direction=match.group(6),
-                size_id=match.group(7),
-                protocol=match.group(8),
-                source_ip=match.group(9),
-                source_port=match.group(10),
-                dest_ip=match.group(11),
-                dest_port=match.group(12),
-                rule_name=match.group(13),
-                original_line=log_line
-            )
-        except (IndexError, AttributeError) as e:
-            # Log parsing error but don't crash
-            return None
+        if match:
+            try:
+                return ParsedLog(
+                    timestamp_id=match.group(1),
+                    network_type=match.group(2),
+                    action=match.group(3),
+                    result=match.group(4),
+                    rule_id=match.group(5),
+                    direction=match.group(6),
+                    size_id=match.group(7),
+                    protocol=match.group(8),
+                    source_ip=match.group(9),
+                    source_port=match.group(10),
+                    dest_ip=match.group(11),
+                    dest_port=match.group(12),
+                    rule_name=match.group(13),
+                    original_line=log_line
+                )
+            except (IndexError, AttributeError):
+                return None
+
+        # Fallback: TERM-style pattern without size, with extra counters
+        match_term = LogParser.LOG_PATTERN_TERM.match(log_line)
+        if match_term:
+            try:
+                return ParsedLog(
+                    timestamp_id=match_term.group(1),
+                    network_type=match_term.group(2),
+                    action=match_term.group(3),
+                    result=match_term.group(4),
+                    rule_id=match_term.group(5),
+                    direction=match_term.group(6),
+                    size_id="",  # size not present in this variant
+                    protocol=match_term.group(7),
+                    source_ip=match_term.group(8),
+                    source_port=match_term.group(9),
+                    dest_ip=match_term.group(10),
+                    dest_port=match_term.group(11),
+                    rule_name=match_term.group(12),
+                    original_line=log_line
+                )
+            except (IndexError, AttributeError):
+                return None
+
+        # No pattern matched
+        return None
 
