@@ -760,6 +760,8 @@ class NSXTClient:
 
         tags: List[Dict[str, Any]] = []
         if label:
+            # Use policyname_rulename as both log label and a searchable tag
+            payload["log_label"] = label
             tags.append({"scope": "label", "tag": label})
         if tags:
             payload["tags"] = tags
