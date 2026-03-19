@@ -10,6 +10,7 @@ from parser import ParsedLog
 
 
 logger = logging.getLogger(__name__)
+NO_GROUP_VALUE = "nogroup"
 
 
 class PostgresClient:
@@ -90,10 +91,14 @@ class PostgresClient:
             if not self.conn:
                 return False
 
-        src_group = src_groups[0] if src_groups else None
-        dest_group = dest_groups[0] if dest_groups else None
+        src_group = src_groups[0] if src_groups else NO_GROUP_VALUE
+        dest_group = dest_groups[0] if dest_groups else NO_GROUP_VALUE
         src_groups_list = [g for g in (src_groups or []) if g]
         dest_groups_list = [g for g in (dest_groups or []) if g]
+        if not src_groups_list:
+            src_groups_list = [NO_GROUP_VALUE]
+        if not dest_groups_list:
+            dest_groups_list = [NO_GROUP_VALUE]
 
         sql = f"""
         INSERT INTO {self.config.table} (
@@ -189,14 +194,14 @@ class PostgresClient:
                         FROM {t}
                         WHERE (%s = '' OR src_ip = %s)
                         UNION
-                        SELECT COALESCE(src_group, '') AS g
+                        SELECT COALESCE(NULLIF(src_group, ''), %s) AS g
                         FROM {t}
                         WHERE (%s = '' OR src_ip = %s)
                     ) src
-                    WHERE g != ''
+                    WHERE g IS NOT NULL AND g != ''
                     ORDER BY 1
                     """,
-                    (src_ip, src_ip, src_ip, src_ip),
+                    (src_ip, src_ip, NO_GROUP_VALUE, src_ip, src_ip),
                 )
                 out["source_groups"] = [r["g"] for r in cur.fetchall()]
                 cur.execute(
@@ -207,14 +212,14 @@ class PostgresClient:
                         FROM {t}
                         WHERE (%s = '' OR dest_ip = %s)
                         UNION
-                        SELECT COALESCE(dest_group, '') AS g
+                        SELECT COALESCE(NULLIF(dest_group, ''), %s) AS g
                         FROM {t}
                         WHERE (%s = '' OR dest_ip = %s)
                     ) dst
-                    WHERE g != ''
+                    WHERE g IS NOT NULL AND g != ''
                     ORDER BY 1
                     """,
-                    (dest_ip, dest_ip, dest_ip, dest_ip),
+                    (dest_ip, dest_ip, NO_GROUP_VALUE, dest_ip, dest_ip),
                 )
                 out["dest_groups"] = [r["g"] for r in cur.fetchall()]
         except Exception as e:
@@ -245,8 +250,8 @@ class PostgresClient:
                 cur.execute(
                     f"""
                     SELECT
-                        COALESCE(src_group, '')   AS source_group,
-                        COALESCE(dest_group, '')  AS dest_group,
+                        COALESCE(NULLIF(src_group, ''), %s)   AS source_group,
+                        COALESCE(NULLIF(dest_group, ''), %s)  AS dest_group,
                         dest_port,
                         src_ip,
                         dest_ip,
@@ -257,8 +262,8 @@ class PostgresClient:
                         rule_id,
                         rule_name
                     FROM {t}
-                    WHERE (%s = '' OR COALESCE(src_group, '') = %s)
-                      AND (%s = '' OR COALESCE(dest_group, '') = %s)
+                    WHERE (%s = '' OR COALESCE(NULLIF(src_group, ''), %s) = %s)
+                      AND (%s = '' OR COALESCE(NULLIF(dest_group, ''), %s) = %s)
                       AND (%s = 0 OR ts >= NOW() - make_interval(hours => %s))
                       AND (%s = '' OR src_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR dest_ip ILIKE '%%' || %s || '%%')
@@ -267,9 +272,13 @@ class PostgresClient:
                     LIMIT 500
                     """,
                     (
+                        NO_GROUP_VALUE,
+                        NO_GROUP_VALUE,
                         source_group,
+                        NO_GROUP_VALUE,
                         source_group,
                         dest_group,
+                        NO_GROUP_VALUE,
                         dest_group,
                         hours,
                         hours,
@@ -311,16 +320,16 @@ class PostgresClient:
                 cur.execute(
                     f"""
                     SELECT
-                        COALESCE(src_group, '')   AS source_group,
-                        COALESCE(dest_group, '')  AS dest_group,
+                        COALESCE(NULLIF(src_group, ''), %s)   AS source_group,
+                        COALESCE(NULLIF(dest_group, ''), %s)  AS dest_group,
                         array_agg(DISTINCT dest_port ORDER BY dest_port)
                             FILTER (WHERE dest_port IS NOT NULL) AS dest_ports,
                         direction,
                         result,
                         SUM(hit_count)::BIGINT AS hit_count
                     FROM {t}
-                    WHERE (%s = '' OR COALESCE(src_group, '') = %s)
-                      AND (%s = '' OR COALESCE(dest_group, '') = %s)
+                    WHERE (%s = '' OR COALESCE(NULLIF(src_group, ''), %s) = %s)
+                      AND (%s = '' OR COALESCE(NULLIF(dest_group, ''), %s) = %s)
                       AND (%s = 0 OR ts >= NOW() - make_interval(hours => %s))
                       AND (%s = '' OR src_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR dest_ip ILIKE '%%' || %s || '%%')
@@ -330,9 +339,13 @@ class PostgresClient:
                     LIMIT 200
                     """,
                     (
+                        NO_GROUP_VALUE,
+                        NO_GROUP_VALUE,
                         source_group,
+                        NO_GROUP_VALUE,
                         source_group,
                         dest_group,
+                        NO_GROUP_VALUE,
                         dest_group,
                         hours,
                         hours,
