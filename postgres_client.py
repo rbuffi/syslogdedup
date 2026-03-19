@@ -74,6 +74,30 @@ class PostgresClient:
                 # Backward-compatible schema evolution for existing deployments.
                 cur.execute(f"ALTER TABLE {self.config.table} ADD COLUMN IF NOT EXISTS src_groups TEXT[]")
                 cur.execute(f"ALTER TABLE {self.config.table} ADD COLUMN IF NOT EXISTS dest_groups TEXT[]")
+                # Backfill arrays for historical rows so UI dropdown filtering
+                # has non-empty values even before those rows are re-ingested.
+                cur.execute(
+                    f"""
+                    UPDATE {self.config.table}
+                    SET
+                        src_groups = ARRAY[COALESCE(NULLIF(src_group, ''), %s)]
+                    WHERE src_groups IS NULL
+                       OR array_length(src_groups, 1) IS NULL
+                       OR array_length(src_groups, 1) = 0
+                    """,
+                    (NO_GROUP_VALUE,),
+                )
+                cur.execute(
+                    f"""
+                    UPDATE {self.config.table}
+                    SET
+                        dest_groups = ARRAY[COALESCE(NULLIF(dest_group, ''), %s)]
+                    WHERE dest_groups IS NULL
+                       OR array_length(dest_groups, 1) IS NULL
+                       OR array_length(dest_groups, 1) = 0
+                    """,
+                    (NO_GROUP_VALUE,),
+                )
         except Exception as e:
             logger.error(f"Failed to ensure PostgreSQL table: {e}")
 
