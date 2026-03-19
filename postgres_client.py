@@ -52,8 +52,10 @@ class PostgresClient:
             ts TIMESTAMPTZ DEFAULT NOW(),
             src_ip TEXT NOT NULL,
             src_group TEXT,
+            src_groups TEXT[],
             dest_ip TEXT NOT NULL,
             dest_group TEXT,
+            dest_groups TEXT[],
             dest_port INT,
             protocol TEXT,
             rule_id TEXT,
@@ -68,6 +70,9 @@ class PostgresClient:
         try:
             with self.conn.cursor() as cur:
                 cur.execute(sql)
+                # Backward-compatible schema evolution for existing deployments.
+                cur.execute(f"ALTER TABLE {self.config.table} ADD COLUMN IF NOT EXISTS src_groups TEXT[]")
+                cur.execute(f"ALTER TABLE {self.config.table} ADD COLUMN IF NOT EXISTS dest_groups TEXT[]")
         except Exception as e:
             logger.error(f"Failed to ensure PostgreSQL table: {e}")
 
@@ -87,10 +92,12 @@ class PostgresClient:
 
         src_group = src_groups[0] if src_groups else None
         dest_group = dest_groups[0] if dest_groups else None
+        src_groups_list = [g for g in (src_groups or []) if g]
+        dest_groups_list = [g for g in (dest_groups or []) if g]
 
         sql = f"""
         INSERT INTO {self.config.table} (
-            src_ip, src_group, dest_ip, dest_group,
+            src_ip, src_group, src_groups, dest_ip, dest_group, dest_groups,
             dest_port, protocol, rule_id, rule_name,
             direction, action, result, hit_count
         ) VALUES %s
@@ -99,7 +106,9 @@ class PostgresClient:
             hit_count = {self.config.table}.hit_count + 1,
             ts = NOW(),
             src_group = EXCLUDED.src_group,
+            src_groups = EXCLUDED.src_groups,
             dest_group = EXCLUDED.dest_group,
+            dest_groups = EXCLUDED.dest_groups,
             rule_id = EXCLUDED.rule_id,
             rule_name = EXCLUDED.rule_name,
             direction = EXCLUDED.direction,
@@ -110,8 +119,10 @@ class PostgresClient:
             (
                 log.source_ip,
                 src_group,
+                src_groups_list if src_groups_list else None,
                 log.dest_ip,
                 dest_group,
+                dest_groups_list if dest_groups_list else None,
                 int(log.dest_port),
                 log.protocol,
                 log.rule_id,
@@ -156,30 +167,54 @@ class PostgresClient:
 
         return self.conn is not None
 
-    def get_groups(self) -> Dict[str, List[str]]:
+    def get_groups(
+        self,
+        src_ip: Optional[str] = None,
+        dest_ip: Optional[str] = None,
+    ) -> Dict[str, List[str]]:
         """Return distinct source_group and dest_group lists for dropdowns."""
         out: Dict[str, List[str]] = {"source_groups": [], "dest_groups": []}
         if not self._ensure_conn():
             return out
         t = self.config.table
+        src_ip = (src_ip or "").strip()
+        dest_ip = (dest_ip or "").strip()
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
                     f"""
-                    SELECT DISTINCT COALESCE(src_group, '') AS g
-                    FROM {t}
-                    WHERE src_group IS NOT NULL AND src_group != ''
+                    SELECT DISTINCT g
+                    FROM (
+                        SELECT unnest(COALESCE(src_groups, ARRAY[]::TEXT[])) AS g
+                        FROM {t}
+                        WHERE (%s = '' OR src_ip = %s)
+                        UNION
+                        SELECT COALESCE(src_group, '') AS g
+                        FROM {t}
+                        WHERE (%s = '' OR src_ip = %s)
+                    ) src
+                    WHERE g != ''
                     ORDER BY 1
-                    """
+                    """,
+                    (src_ip, src_ip, src_ip, src_ip),
                 )
                 out["source_groups"] = [r["g"] for r in cur.fetchall()]
                 cur.execute(
                     f"""
-                    SELECT DISTINCT COALESCE(dest_group, '') AS g
-                    FROM {t}
-                    WHERE dest_group IS NOT NULL AND dest_group != ''
+                    SELECT DISTINCT g
+                    FROM (
+                        SELECT unnest(COALESCE(dest_groups, ARRAY[]::TEXT[])) AS g
+                        FROM {t}
+                        WHERE (%s = '' OR dest_ip = %s)
+                        UNION
+                        SELECT COALESCE(dest_group, '') AS g
+                        FROM {t}
+                        WHERE (%s = '' OR dest_ip = %s)
+                    ) dst
+                    WHERE g != ''
                     ORDER BY 1
-                    """
+                    """,
+                    (dest_ip, dest_ip, dest_ip, dest_ip),
                 )
                 out["dest_groups"] = [r["g"] for r in cur.fetchall()]
         except Exception as e:

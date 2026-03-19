@@ -33,9 +33,12 @@ if static_dir.is_dir():
 
 
 @app.get("/api/groups")
-def api_groups():
+def api_groups(
+    src_ip: str = Query("", description="Filter source groups by exact source IP"),
+    dest_ip: str = Query("", description="Filter destination groups by exact destination IP"),
+):
     """Distinct source_group and dest_group for dropdowns."""
-    return pg.get_groups()
+    return pg.get_groups(src_ip=src_ip or None, dest_ip=dest_ip or None)
 
 
 @app.get("/api/rules")

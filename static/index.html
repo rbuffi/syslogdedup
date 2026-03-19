@@ -334,7 +334,15 @@
 
     async function loadGroups() {
       try {
-        const r = await fetch('/api/groups');
+        const currentSource = sourceSelect.value;
+        const currentDest = destSelect.value;
+        const srcIp = srcIpFilter.value.trim();
+        const destIp = destIpFilter.value.trim();
+        const params = new URLSearchParams();
+        if (srcIp) params.set('src_ip', srcIp);
+        if (destIp) params.set('dest_ip', destIp);
+        const suffix = params.toString();
+        const r = await fetch('/api/groups' + (suffix ? ('?' + suffix) : ''));
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         const sg = data.source_groups || [];
@@ -343,6 +351,12 @@
         allDestGroups = dg.slice();
         sourceSelect.innerHTML = '<option value="">All</option>' + sg.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)}</option>`).join('');
         destSelect.innerHTML = '<option value="">All</option>' + dg.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)}</option>`).join('');
+        if (currentSource && sg.includes(currentSource)) {
+          sourceSelect.value = currentSource;
+        }
+        if (currentDest && dg.includes(currentDest)) {
+          destSelect.value = currentDest;
+        }
       } catch (e) {
         showError('Failed to load groups: ' + e.message);
       }
@@ -706,8 +720,14 @@
     sourceSelect.addEventListener('change', loadRules);
     destSelect.addEventListener('change', loadRules);
     hoursSelect.addEventListener('change', loadRules);
-    srcIpFilter.addEventListener('change', loadRules);
-    destIpFilter.addEventListener('change', loadRules);
+    srcIpFilter.addEventListener('change', async () => {
+      await loadGroups();
+      await loadRules();
+    });
+    destIpFilter.addEventListener('change', async () => {
+      await loadGroups();
+      await loadRules();
+    });
     portFilter.addEventListener('change', loadRules);
     ruleCancelBtn.addEventListener('click', closeRuleModal);
     ruleSubmitBtn.addEventListener('click', submitRule);
