@@ -280,6 +280,14 @@ class PostgresClient:
                     SELECT
                         COALESCE(NULLIF(src_group, ''), %s)   AS source_group,
                         COALESCE(NULLIF(dest_group, ''), %s)  AS dest_group,
+                        COALESCE(
+                            NULLIF(src_groups, ARRAY[]::TEXT[]),
+                            ARRAY[COALESCE(NULLIF(src_group, ''), %s)]
+                        ) AS source_groups,
+                        COALESCE(
+                            NULLIF(dest_groups, ARRAY[]::TEXT[]),
+                            ARRAY[COALESCE(NULLIF(dest_group, ''), %s)]
+                        ) AS dest_groups,
                         dest_port,
                         src_ip,
                         dest_ip,
@@ -300,6 +308,8 @@ class PostgresClient:
                     LIMIT 500
                     """,
                     (
+                        NO_GROUP_VALUE,
+                        NO_GROUP_VALUE,
                         NO_GROUP_VALUE,
                         NO_GROUP_VALUE,
                         source_group,

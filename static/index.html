@@ -387,6 +387,14 @@
     function escapeHtml(s) {
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
+    function parseJsonArray(raw) {
+      try {
+        const parsed = JSON.parse(raw || '[]');
+        return Array.isArray(parsed) ? parsed.filter(v => typeof v === 'string' && v.trim()) : [];
+      } catch (_) {
+        return [];
+      }
+    }
 
     async function loadRules() {
       const sourceGroup = sourceSelect.value.trim();
@@ -432,9 +440,11 @@
       const destGroup = a.dataset.destGroup || '';
       const srcIp = a.dataset.srcIp || '';
       const destIp = a.dataset.destIp || '';
+      const sourceGroups = parseJsonArray(a.dataset.sourceGroups);
+      const destGroups = parseJsonArray(a.dataset.destGroups);
       const direction = a.dataset.direction || '';
       const protocol = a.dataset.protocol || '';
-      ruleContext = { port, sourceGroup, destGroup, srcIp, destIp, direction, protocol };
+      ruleContext = { port, sourceGroup, destGroup, srcIp, destIp, sourceGroups, destGroups, direction, protocol };
       void openRuleModal();
     }
 
@@ -462,7 +472,7 @@
         }
         const port = row.dest_port != null ? row.dest_port : '—';
         const portCell = port !== '—'
-          ? '<a href="#" class="port-link" data-port="' + escapeAttr(port) + '" data-source-group="' + escapeAttr(sg) + '" data-dest-group="' + escapeAttr(dg) + '" data-src-ip="' + escapeAttr(row.src_ip ?? '') + '" data-dest-ip="' + escapeAttr(row.dest_ip ?? '') + '" data-direction="' + escapeAttr(row.direction ?? '') + '" data-protocol="' + escapeAttr(row.protocol ?? '') + '">' + escapeHtml(String(port)) + '</a>'
+          ? '<a href="#" class="port-link" data-port="' + escapeAttr(port) + '" data-source-group="' + escapeAttr(sg) + '" data-dest-group="' + escapeAttr(dg) + '" data-source-groups="' + escapeAttr(JSON.stringify(Array.isArray(row.source_groups) ? row.source_groups : [])) + '" data-dest-groups="' + escapeAttr(JSON.stringify(Array.isArray(row.dest_groups) ? row.dest_groups : [])) + '" data-src-ip="' + escapeAttr(row.src_ip ?? '') + '" data-dest-ip="' + escapeAttr(row.dest_ip ?? '') + '" data-direction="' + escapeAttr(row.direction ?? '') + '" data-protocol="' + escapeAttr(row.protocol ?? '') + '">' + escapeHtml(String(port)) + '</a>'
           : '—';
         trs.push(
           '<tr>' +
@@ -605,15 +615,24 @@
       ruleService.innerHTML = '<option value="">Loading…</option>';
       modalBackdrop.style.display = 'flex';
 
-      let modalSourceGroups = allSourceGroups.slice();
-      let modalDestGroups = allDestGroups.slice();
-      try {
-        const data = await fetchGroupsForModal(ruleContext.srcIp, ruleContext.destIp);
-        modalSourceGroups = (data.source_groups || []).slice();
-        modalDestGroups = (data.dest_groups || []).slice();
-      } catch (e) {
-        modalSourceGroups = [];
-        modalDestGroups = [];
+      let modalSourceGroups = Array.isArray(ruleContext.sourceGroups) && ruleContext.sourceGroups.length
+        ? ruleContext.sourceGroups.slice()
+        : allSourceGroups.slice();
+      let modalDestGroups = Array.isArray(ruleContext.destGroups) && ruleContext.destGroups.length
+        ? ruleContext.destGroups.slice()
+        : allDestGroups.slice();
+      if (!modalSourceGroups.length || !modalDestGroups.length) {
+        try {
+          const data = await fetchGroupsForModal(ruleContext.srcIp, ruleContext.destIp);
+          if (!modalSourceGroups.length) {
+            modalSourceGroups = (data.source_groups || []).slice();
+          }
+          if (!modalDestGroups.length) {
+            modalDestGroups = (data.dest_groups || []).slice();
+          }
+        } catch (e) {
+          // Keep current fallback values if lookup fails.
+        }
       }
 
       const srcOptions = ['<option value="">(select)</option>']
