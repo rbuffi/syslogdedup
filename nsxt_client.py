@@ -207,14 +207,13 @@ class NSXTClient:
     def lookup_ip_groups(self, ip_address: str) -> Optional[List[str]]:
         """
         Lookup which NSX groups contain the given IP address.
-        Returns all matching groups for the IP address (including nested matches),
-        sorted so that least-effective groups (by member_count) come first.
+        Returns only the group(s) with the least effective members.
         
         Args:
             ip_address: IP address to lookup
             
         Returns:
-            List containing all matching group names (possibly empty).
+            List containing the group name(s) with least members, or empty list.
         """
         # Check per-IP cache first
         cached = self._get_from_cache(ip_address)
@@ -237,9 +236,9 @@ class NSXTClient:
             self._store_in_cache(ip_address, [])
             return []
         
-        # Sort least-effective first, but keep *all* matching groups.
-        matching_groups.sort(key=lambda nc: (nc[1], nc[0]))
-        selected = [name for name, _count in matching_groups]
+        # Select group(s) with the least members
+        min_count = min(count for _, count in matching_groups)
+        selected = sorted({name for name, count in matching_groups if count == min_count})
         
         # Store in cache (even if empty list) so repeated lookups are cheap
         self._store_in_cache(ip_address, selected)

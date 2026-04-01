@@ -4,6 +4,7 @@ import logging
 import signal
 import socket
 import sys
+from typing import List, Optional, Tuple
 from config import load_config, Config
 from parser import LogParser
 from deduplicator import Deduplicator
@@ -77,6 +78,35 @@ class SyslogServer:
         except Exception as e:
             logger.error(f"Failed to setup socket: {e}")
             sys.exit(1)
+
+    def _lookup_groups_for_ingest(self, ip_address: str) -> Tuple[Optional[List[str]], Optional[List[str]]]:
+        """
+        Return two group lists for an IP:
+        - primary_groups: least-effective match(es) for forwarder/influx compatibility
+        - all_groups: all matching groups for DB persistence
+        """
+        primary_groups = self.nsxt_client.lookup_ip_groups(ip_address)
+        if primary_groups is not None and len(primary_groups) == 0:
+            primary_groups = None
+
+        # Keep "all groups" resolution in main.py (ingest path), not nsxt_client.
+        self.nsxt_client._refresh_groups_if_needed()
+        matching: List[Tuple[str, int]] = []
+        for group_detail in self.nsxt_client._groups:
+            if self.nsxt_client._ip_matches_group(ip_address, group_detail):
+                name = self.nsxt_client._extract_group_name(group_detail)
+                if name:
+                    matching.append((name, int(group_detail.get("member_count", 999999))))
+
+        if not matching:
+            return primary_groups, None
+
+        best_count_by_name = {}
+        for name, count in matching:
+            if name not in best_count_by_name or count < best_count_by_name[name]:
+                best_count_by_name[name] = count
+        all_groups = [name for name, _count in sorted(best_count_by_name.items(), key=lambda nc: (nc[1], nc[0]))]
+        return primary_groups, (all_groups or None)
     
     def _process_log(self, parsed_part: str, raw_line: str):
         """
@@ -107,11 +137,11 @@ class SyslogServer:
         # Lookup groups for source and destination IPs
         source_groups = None
         dest_groups = None
+        source_groups_all = None
+        dest_groups_all = None
         
         try:
-            source_groups = self.nsxt_client.lookup_ip_groups(parsed_log.source_ip)
-            if source_groups is not None and len(source_groups) == 0:
-                source_groups = None
+            source_groups, source_groups_all = self._lookup_groups_for_ingest(parsed_log.source_ip)
         except Exception as e:
             # Log to dedicated NSX groups file with raw syslog line and reason
             nsx_failure_logger.warning(
@@ -122,9 +152,7 @@ class SyslogServer:
             )
         
         try:
-            dest_groups = self.nsxt_client.lookup_ip_groups(parsed_log.dest_ip)
-            if dest_groups is not None and len(dest_groups) == 0:
-                dest_groups = None
+            dest_groups, dest_groups_all = self._lookup_groups_for_ingest(parsed_log.dest_ip)
         except Exception as e:
             nsx_failure_logger.warning(
                 "NSX group lookup failed for dest_ip=%s; reason=%s; raw_syslog=%r",
@@ -149,7 +177,11 @@ class SyslogServer:
 
         # Write to PostgreSQL (best-effort)
         try:
-            self.pg_client.write_log(parsed_log, source_groups, dest_groups)
+            self.pg_client.write_log(
+                parsed_log,
+                source_groups_all if source_groups_all is not None else source_groups,
+                dest_groups_all if dest_groups_all is not None else dest_groups,
+            )
         except Exception as e:
             logger.debug(f"Failed to write log to PostgreSQL: {e}")
     
