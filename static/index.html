@@ -395,6 +395,17 @@
         return [];
       }
     }
+    function uniqueNonEmpty(items) {
+      const out = [];
+      const seen = new Set();
+      for (const item of (items || [])) {
+        const value = String(item || '').trim();
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        out.push(value);
+      }
+      return out;
+    }
 
     async function loadRules() {
       const sourceGroup = sourceSelect.value.trim();
@@ -615,25 +626,13 @@
       ruleService.innerHTML = '<option value="">Loading…</option>';
       modalBackdrop.style.display = 'flex';
 
-      let modalSourceGroups = Array.isArray(ruleContext.sourceGroups) && ruleContext.sourceGroups.length
-        ? ruleContext.sourceGroups.slice()
-        : allSourceGroups.slice();
-      let modalDestGroups = Array.isArray(ruleContext.destGroups) && ruleContext.destGroups.length
-        ? ruleContext.destGroups.slice()
-        : allDestGroups.slice();
-      if (!modalSourceGroups.length || !modalDestGroups.length) {
-        try {
-          const data = await fetchGroupsForModal(ruleContext.srcIp, ruleContext.destIp);
-          if (!modalSourceGroups.length) {
-            modalSourceGroups = (data.source_groups || []).slice();
-          }
-          if (!modalDestGroups.length) {
-            modalDestGroups = (data.dest_groups || []).slice();
-          }
-        } catch (e) {
-          // Keep current fallback values if lookup fails.
-        }
-      }
+      // Strict behavior: only allow groups that belong to the clicked rule row.
+      const modalSourceGroups = uniqueNonEmpty([]
+        .concat(Array.isArray(ruleContext.sourceGroups) ? ruleContext.sourceGroups : [])
+        .concat(ruleContext.sourceGroup || []));
+      const modalDestGroups = uniqueNonEmpty([]
+        .concat(Array.isArray(ruleContext.destGroups) ? ruleContext.destGroups : [])
+        .concat(ruleContext.destGroup || []));
 
       const srcOptions = ['<option value="">(select)</option>']
         .concat(modalSourceGroups.map(g => '<option value="' + escapeAttr(g) + '">' + escapeHtml(g) + '</option>'));
