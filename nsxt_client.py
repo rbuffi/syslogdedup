@@ -614,7 +614,9 @@ class NSXTClient:
         List L4 services defined in NSX-T Policy.
 
         Returns a list of dicts:
-            {id, name, display, protocol, ports: [\"443\", ...]}
+            {id, name, display, protocol, ports: [\"443\", ...],
+             service_entries: [{l4_protocol, destination_ports: [...]}, ...]}
+        Per-entry data preserves correct L4 when a service has multiple entries (e.g. TCP and UDP).
         """
         services: List[Dict[str, Any]] = []
         cursor: Optional[str] = None
@@ -641,6 +643,7 @@ class NSXTClient:
 
                     ports_set = set()
                     protocol = None
+                    serialized_entries: List[Dict[str, Any]] = []
                     for entry in service_entries:
                         entry_ports = entry.get("destination_ports") or []
                         for p in entry_ports:
@@ -648,6 +651,12 @@ class NSXTClient:
                         proto = entry.get("l4_protocol")
                         if proto and not protocol:
                             protocol = proto
+                        serialized_entries.append(
+                            {
+                                "l4_protocol": proto,
+                                "destination_ports": [str(p) for p in entry_ports],
+                            }
+                        )
 
                     services.append(
                         {
@@ -656,6 +665,7 @@ class NSXTClient:
                             "display": display_name,
                             "protocol": protocol,
                             "ports": sorted(ports_set),
+                            "service_entries": serialized_entries,
                         }
                     )
 

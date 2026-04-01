@@ -426,12 +426,36 @@
       return ruleNum >= min && ruleNum <= max;
     }
 
+    function normalizeL4Protocol(raw) {
+      const s = String(raw || '').trim().toUpperCase();
+      if (!s) return '';
+      if (s === '6' || s === 'IPV4_TCP') return 'TCP';
+      if (s === '17' || s === 'IPV4_UDP') return 'UDP';
+      return s;
+    }
+
+    function serviceEntryMatchesFlow(entry, portStr, flowProtoNorm) {
+      const ports = entry.destination_ports;
+      if (!Array.isArray(ports) || !ports.length) return false;
+      const pMatch = ports.some(p => servicePortMatches(portStr, p));
+      if (!pMatch) return false;
+      const ep = normalizeL4Protocol(entry.l4_protocol);
+      if (!ep || !flowProtoNorm) return true;
+      return ep === flowProtoNorm;
+    }
+
     function serviceMatchesFlowPort(s, portStr, protoUpper) {
+      const flowProtoNorm = normalizeL4Protocol(protoUpper);
+      const entries = s.service_entries;
+      if (Array.isArray(entries) && entries.length) {
+        return entries.some(e => serviceEntryMatchesFlow(e, portStr, flowProtoNorm));
+      }
       if (!Array.isArray(s.ports) || !s.ports.length) return false;
       const pMatch = s.ports.some(p => servicePortMatches(portStr, p));
       if (!pMatch) return false;
-      if (!s.protocol || !protoUpper) return true;
-      return String(s.protocol).toUpperCase() === protoUpper;
+      const svcProto = normalizeL4Protocol(s.protocol);
+      if (!svcProto || !flowProtoNorm) return true;
+      return svcProto === flowProtoNorm;
     }
 
     async function loadRules() {
