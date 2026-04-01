@@ -120,8 +120,8 @@ def api_nsx_create_rule(req: CreateRuleRequest):
     - Logging enabled
     - Rule created disabled
     - Applied-to depends on direction:
-        in     -> source group
-        out    -> destination group
+        in     -> destination group
+        out    -> source group
         in/out -> both source and destination groups
     """
     if not nsxt:
@@ -144,10 +144,10 @@ def api_nsx_create_rule(req: CreateRuleRequest):
     # Map to NSX-T direction constants
     if direction_raw == "in":
         nsx_direction = "IN"
-        applied_to = [source_group]
+        applied_to = [dest_group]
     elif direction_raw == "out":
         nsx_direction = "OUT"
-        applied_to = [dest_group]
+        applied_to = [source_group]
     else:
         nsx_direction = "IN_OUT"
         applied_to = [source_group, dest_group]

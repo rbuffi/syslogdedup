@@ -7,7 +7,7 @@ from config import NSXTConfig
 class DummyNSXTClient(NSXTClient):
     """
     Minimal subclass that lets us inject a pre-populated groups cache so we can
-    exercise direction → applied-to mapping and payload construction logic
+    exercise applied-to → scope payload construction logic
     without talking to a real NSX-T Manager.
     """
 
@@ -60,26 +60,11 @@ class TestDirectionAppliedToMapping(unittest.TestCase):
     def setUp(self) -> None:
         self.client = DummyNSXTClient()
 
-    def test_in_direction_applied_to_source(self):
+    def test_in_direction_applied_to_dest(self):
         payload = self.client._request_payload_only(
             policy_id="pol1",
             rule_name="src-group_dst-group_svc_in",
             direction="IN",
-            source_group_names=["src-group"],
-            dest_group_names=["dst-group"],
-            applied_to_group_names=["src-group"],
-            service_id="svc-1",
-        )
-        self.assertEqual(
-            payload["scope"],
-            ["/infra/domains/default/groups/src-group"],
-        )
-
-    def test_out_direction_applied_to_dest(self):
-        payload = self.client._request_payload_only(
-            policy_id="pol1",
-            rule_name="src-group_dst-group_svc_out",
-            direction="OUT",
             source_group_names=["src-group"],
             dest_group_names=["dst-group"],
             applied_to_group_names=["dst-group"],
@@ -88,6 +73,21 @@ class TestDirectionAppliedToMapping(unittest.TestCase):
         self.assertEqual(
             payload["scope"],
             ["/infra/domains/default/groups/dst-group"],
+        )
+
+    def test_out_direction_applied_to_source(self):
+        payload = self.client._request_payload_only(
+            policy_id="pol1",
+            rule_name="src-group_dst-group_svc_out",
+            direction="OUT",
+            source_group_names=["src-group"],
+            dest_group_names=["dst-group"],
+            applied_to_group_names=["src-group"],
+            service_id="svc-1",
+        )
+        self.assertEqual(
+            payload["scope"],
+            ["/infra/domains/default/groups/src-group"],
         )
 
     def test_in_out_direction_applied_to_both(self):

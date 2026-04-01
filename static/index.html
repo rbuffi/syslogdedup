@@ -407,6 +407,33 @@
       return out;
     }
 
+    function servicePortMatches(rulePort, servicePortEntry) {
+      const rulePortStr = String(rulePort || '').trim();
+      const entry = String(servicePortEntry || '').trim();
+      if (!rulePortStr || !entry) return false;
+      if (entry === rulePortStr) return true;
+
+      const ruleNum = Number.parseInt(rulePortStr, 10);
+      if (!Number.isFinite(ruleNum)) return false;
+
+      const rangeMatch = entry.match(/^(\d+)\s*-\s*(\d+)$/);
+      if (!rangeMatch) return false;
+      const start = Number.parseInt(rangeMatch[1], 10);
+      const end = Number.parseInt(rangeMatch[2], 10);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+      const min = Math.min(start, end);
+      const max = Math.max(start, end);
+      return ruleNum >= min && ruleNum <= max;
+    }
+
+    function serviceMatchesFlowPort(s, portStr, protoUpper) {
+      if (!Array.isArray(s.ports) || !s.ports.length) return false;
+      const pMatch = s.ports.some(p => servicePortMatches(portStr, p));
+      if (!pMatch) return false;
+      if (!s.protocol || !protoUpper) return true;
+      return String(s.protocol).toUpperCase() === protoUpper;
+    }
+
     async function loadRules() {
       const sourceGroup = sourceSelect.value.trim();
       const destGroup = destSelect.value.trim();
@@ -669,26 +696,26 @@
             ruleService.innerHTML = '<option value="">No services found</option>';
             return;
           }
-          ruleService.innerHTML = services
+          const portStr = ruleContext.port != null ? String(ruleContext.port).trim() : '';
+          const proto = (ruleContext.protocol || '').toUpperCase();
+          const usePortFilter = portStr !== '';
+          let listToShow = services;
+          if (usePortFilter) {
+            listToShow = services.filter(s => serviceMatchesFlowPort(s, portStr, proto));
+          }
+          if (usePortFilter && !listToShow.length) {
+            ruleService.innerHTML = '<option value="">none</option>';
+            return;
+          }
+          ruleService.innerHTML = listToShow
             .map(s => {
               const label = s.display || s.name || s.id;
               return '<option value="' + escapeAttr(s.id) + '">' + escapeHtml(label) + '</option>';
             })
             .join('');
 
-          if (ruleContext.port && services.length) {
-            const portStr = String(ruleContext.port);
-            const proto = (ruleContext.protocol || '').toUpperCase();
-            const match = services.find(s => {
-              if (!Array.isArray(s.ports) || !s.ports.length) return false;
-              const pMatch = s.ports.includes(portStr);
-              if (!pMatch) return false;
-              if (!s.protocol || !proto) return pMatch;
-              return String(s.protocol).toUpperCase() === proto;
-            });
-            if (match) {
-              ruleService.value = match.id;
-            }
+          if (usePortFilter && listToShow.length) {
+            ruleService.value = listToShow[0].id;
           }
         })
         .catch(e => {
