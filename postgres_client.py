@@ -210,42 +210,46 @@ class PostgresClient:
         dest_ip = (dest_ip or "").strip()
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    f"""
-                    SELECT DISTINCT g
-                    FROM (
-                        SELECT unnest(COALESCE(src_groups, ARRAY[]::TEXT[])) AS g
-                        FROM {t}
-                        WHERE (%s = '' OR src_ip = %s)
-                        UNION
-                        SELECT COALESCE(NULLIF(src_group, ''), %s) AS g
-                        FROM {t}
-                        WHERE (%s = '' OR src_ip = %s)
-                    ) src
-                    WHERE g IS NOT NULL AND g != ''
-                    ORDER BY 1
-                    """,
-                    (src_ip, src_ip, NO_GROUP_VALUE, src_ip, src_ip),
-                )
-                out["source_groups"] = [r["g"] for r in cur.fetchall()]
-                cur.execute(
-                    f"""
-                    SELECT DISTINCT g
-                    FROM (
-                        SELECT unnest(COALESCE(dest_groups, ARRAY[]::TEXT[])) AS g
-                        FROM {t}
-                        WHERE (%s = '' OR dest_ip = %s)
-                        UNION
-                        SELECT COALESCE(NULLIF(dest_group, ''), %s) AS g
-                        FROM {t}
-                        WHERE (%s = '' OR dest_ip = %s)
-                    ) dst
-                    WHERE g IS NOT NULL AND g != ''
-                    ORDER BY 1
-                    """,
-                    (dest_ip, dest_ip, NO_GROUP_VALUE, dest_ip, dest_ip),
-                )
-                out["dest_groups"] = [r["g"] for r in cur.fetchall()]
+                # Only return source_groups when src_ip is set; otherwise the old
+                # "OR true" filter matched every row and listed all groups.
+                if src_ip:
+                    cur.execute(
+                        f"""
+                        SELECT DISTINCT g
+                        FROM (
+                            SELECT unnest(COALESCE(src_groups, ARRAY[]::TEXT[])) AS g
+                            FROM {t}
+                            WHERE src_ip = %s
+                            UNION
+                            SELECT COALESCE(NULLIF(src_group, ''), %s) AS g
+                            FROM {t}
+                            WHERE src_ip = %s
+                        ) src
+                        WHERE g IS NOT NULL AND g != ''
+                        ORDER BY 1
+                        """,
+                        (src_ip, NO_GROUP_VALUE, src_ip),
+                    )
+                    out["source_groups"] = [r["g"] for r in cur.fetchall()]
+                if dest_ip:
+                    cur.execute(
+                        f"""
+                        SELECT DISTINCT g
+                        FROM (
+                            SELECT unnest(COALESCE(dest_groups, ARRAY[]::TEXT[])) AS g
+                            FROM {t}
+                            WHERE dest_ip = %s
+                            UNION
+                            SELECT COALESCE(NULLIF(dest_group, ''), %s) AS g
+                            FROM {t}
+                            WHERE dest_ip = %s
+                        ) dst
+                        WHERE g IS NOT NULL AND g != ''
+                        ORDER BY 1
+                        """,
+                        (dest_ip, NO_GROUP_VALUE, dest_ip),
+                    )
+                    out["dest_groups"] = [r["g"] for r in cur.fetchall()]
         except Exception as e:
             logger.debug(f"Failed to get groups from PostgreSQL: {e}")
         return out

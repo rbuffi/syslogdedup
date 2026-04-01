@@ -333,15 +333,22 @@
     }
 
     async function fetchGroupsForModal(srcIp, destIp) {
-      const params = new URLSearchParams();
       const s = (srcIp || '').trim();
       const d = (destIp || '').trim();
-      if (s) params.set('src_ip', s);
-      if (d) params.set('dest_ip', d);
-      const q = params.toString();
-      const r = await fetch('/api/groups' + (q ? '?' + q : ''));
-      if (!r.ok) throw new Error(r.statusText);
-      return r.json();
+      const out = { source_groups: [], dest_groups: [] };
+      if (s) {
+        const r = await fetch('/api/groups?' + new URLSearchParams({ src_ip: s }));
+        if (!r.ok) throw new Error(r.statusText);
+        const data = await r.json();
+        out.source_groups = data.source_groups || [];
+      }
+      if (d) {
+        const r = await fetch('/api/groups?' + new URLSearchParams({ dest_ip: d }));
+        if (!r.ok) throw new Error(r.statusText);
+        const data = await r.json();
+        out.dest_groups = data.dest_groups || [];
+      }
+      return out;
     }
 
     async function loadGroups() {
@@ -605,8 +612,8 @@
         modalSourceGroups = (data.source_groups || []).slice();
         modalDestGroups = (data.dest_groups || []).slice();
       } catch (e) {
-        modalSourceGroups = allSourceGroups.slice();
-        modalDestGroups = allDestGroups.slice();
+        modalSourceGroups = [];
+        modalDestGroups = [];
       }
 
       const srcOptions = ['<option value="">(select)</option>']
