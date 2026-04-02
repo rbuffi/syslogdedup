@@ -12,6 +12,9 @@ from config import NSXTConfig
 
 logger = logging.getLogger(__name__)
 
+# Structured tag (scope "label") for rules created by this app; separate from payload["tag"] (log/CLI).
+CREATED_BY_TOOL_LABEL_TAG = "Regel aangemaakt door NSX microsegmentatie tool"
+
 
 class NSXTClient:
     """Client for NSX-T Manager API to lookup IP addresses in groups."""
@@ -776,16 +779,15 @@ class NSXTClient:
             payload["description"] = description[:1024]
             payload["notes"] = description[:2048]
 
-        # Use policyname_rulename as "tag" (shown in CLI/logs) and also
-        # add a structured Tag entry for API consumers.
+        # `label` from the caller is the log/CLI tag (policyName_ruleName).
+        # The structured tags[] entry with scope "label" is a fixed tool marker.
         if label:
             payload["tag"] = label  # printed in CLI and packet logs
 
-        tags: List[Dict[str, Any]] = []
-        if label:
-            tags.append({"scope": "label", "tag": label})
-        if tags:
-            payload["tags"] = tags
+        tags: List[Dict[str, Any]] = [
+            {"scope": "label", "tag": CREATED_BY_TOOL_LABEL_TAG},
+        ]
+        payload["tags"] = tags
 
         try:
             resp = self.session.put(url, json=payload, timeout=20)

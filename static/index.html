@@ -607,14 +607,12 @@
               ? ports.join(', ')
               : ports.slice(0, 10).join(', ') + `, +${ports.length - 10} more`);
         const hitCount = row.hit_count ?? '';
-        const direction = row.direction ?? '';
         const result = row.result ?? '';
         trs.push(
           '<tr>' +
           '<td>' + escapeHtml(sg) + '</td>' +
           '<td>' + escapeHtml(dg) + '</td>' +
           '<td>' + escapeHtml(portsSummary) + '</td>' +
-          '<td>' + escapeHtml(direction) + '</td>' +
           '<td>' + escapeHtml(result) + '</td>' +
           '<td>' + escapeHtml(String(hitCount)) + '</td>' +
           '<td><button type="button" class="btn btn-ghost" data-sg="' + escapeAttr(sg) + '" data-dg="' + escapeAttr(dg) + '">Details</button></td>' +
@@ -624,7 +622,7 @@
       tableWrap.innerHTML =
         '<table><thead><tr>' +
         '<th>Source group</th><th>Dest group</th><th>Dest ports</th>' +
-        '<th>Direction</th><th>Result</th><th>Hit count</th><th></th>' +
+        '<th>Result</th><th>Hit count</th><th></th>' +
         '</tr></thead><tbody>' + trs.join('') + '</tbody></table>';
 
       tableWrap.querySelectorAll('button[data-sg]').forEach(btn => {
