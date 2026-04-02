@@ -716,6 +716,7 @@ class NSXTClient:
         dest_group_names: List[str],
         applied_to_group_names: List[str],
         service_id: str,
+        ip_protocol: Optional[str] = None,
         description: Optional[str] = None,
         label: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -765,9 +766,15 @@ class NSXTClient:
             "scope": applied_paths,
             "action": "ALLOW",
         }
+        if ip_protocol:
+            payload["ip_protocol"] = ip_protocol
         # Long-form description for config / UI
+        # NSX-T limits:
+        # - description: max 1024 chars
+        # - notes: max 2048 chars
         if description:
-            payload["description"] = description
+            payload["description"] = description[:1024]
+            payload["notes"] = description[:2048]
 
         # Use policyname_rulename as "tag" (shown in CLI/logs) and also
         # add a structured Tag entry for API consumers.

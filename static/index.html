@@ -269,6 +269,14 @@
           </select>
         </label>
         <label>
+          IP Protocol
+          <select id="ruleIpProtocol">
+            <option value="IPV4" selected>IPV4</option>
+            <option value="IPV6">IPV6</option>
+            <option value="IPV4_IPV6">IPV4_IPV6</option>
+          </select>
+        </label>
+        <label>
           Service
           <select id="ruleService"></select>
         </label>
@@ -305,6 +313,7 @@
     const ruleDestGroup = document.getElementById('ruleDestGroup');
     const rulePolicy = document.getElementById('rulePolicy');
     const ruleDirection = document.getElementById('ruleDirection');
+    const ruleIpProtocol = document.getElementById('ruleIpProtocol');
     const ruleService = document.getElementById('ruleService');
     const ruleComment = document.getElementById('ruleComment');
     const ruleStatus = document.getElementById('ruleStatus');
@@ -672,6 +681,8 @@
       ruleDirection.value = (ruleContext.direction || '').toLowerCase() === 'out' ? 'out'
         : (ruleContext.direction || '').toLowerCase() === 'in/out' ? 'in/out'
         : 'in';
+      // Default to IPV4 when creating a new rule
+      ruleIpProtocol.value = 'IPV4';
 
       rulePolicy.innerHTML = '<option value="">Loading…</option>';
       ruleService.innerHTML = '<option value="">Loading…</option>';
@@ -793,6 +804,7 @@
           policy_name: policyName,
           direction: direction,
           service_id: serviceId,
+          ip_protocol: ruleIpProtocol.value,
           port: ruleContext.port || null,
           protocol: ruleContext.protocol || null,
           comment: comment || null
