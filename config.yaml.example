@@ -32,3 +32,13 @@ postgres:
   password: "your-password-here"
   table: "flows"
 
+# Optional: OIDC login for the Web UI (e.g. Keycloak). When enabled, / and /api/* require a session.
+# oidc:
+#   enabled: true
+#   issuer: "https://keycloak.example.com/realms/myrealm"
+#   client_id: "firewall-ui"
+#   client_secret: "your-client-secret"
+#   redirect_uri: "http://localhost:8080/auth/callback"
+#   scope: "openid email profile"
+#   session_secret: "long-random-string-for-cookie-signing"
+

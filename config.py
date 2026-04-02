@@ -2,7 +2,7 @@
 import os
 import yaml
 from typing import Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -57,6 +57,19 @@ class WebConfig:
 
 
 @dataclass
+class OidcConfig:
+    """Optional OIDC (e.g. Keycloak) for the Web UI / API."""
+
+    enabled: bool = False
+    issuer: str = ""
+    client_id: str = ""
+    client_secret: str = ""
+    redirect_uri: str = ""
+    scope: str = "openid email profile"
+    session_secret: str = ""
+
+
+@dataclass
 class Config:
     """Main configuration class."""
     syslog: SyslogConfig
@@ -64,6 +77,7 @@ class Config:
     influx: InfluxConfig
     postgres: PostgresConfig
     web: Optional[WebConfig] = None
+    oidc: OidcConfig = field(default_factory=OidcConfig)
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -140,7 +154,24 @@ def load_config(config_path: Optional[str] = None) -> Config:
         host=os.getenv('WEB_HOST', web_cfg.get('host', '0.0.0.0')),
         port=int(os.getenv('WEB_PORT', web_cfg.get('port', 8080))),
     )
-    
+
+    oidc_cfg = config_data.get('oidc', {})
+    oidc_config = OidcConfig(
+        enabled=os.getenv(
+            'OIDC_ENABLED',
+            str(oidc_cfg.get('enabled', False)),
+        ).lower() == 'true',
+        issuer=os.getenv('OIDC_ISSUER', oidc_cfg.get('issuer', '')).strip(),
+        client_id=os.getenv('OIDC_CLIENT_ID', oidc_cfg.get('client_id', '')).strip(),
+        client_secret=os.getenv('OIDC_CLIENT_SECRET', oidc_cfg.get('client_secret', '')).strip(),
+        redirect_uri=os.getenv('OIDC_REDIRECT_URI', oidc_cfg.get('redirect_uri', '')).strip(),
+        scope=os.getenv('OIDC_SCOPE', oidc_cfg.get('scope', 'openid email profile')).strip(),
+        session_secret=os.getenv(
+            'OIDC_SESSION_SECRET',
+            os.getenv('WEB_SESSION_SECRET', oidc_cfg.get('session_secret', '')),
+        ).strip(),
+    )
+
     web_only = os.getenv('WEB_ONLY', '').lower() == 'true'
 
     # Validate required fields (skip syslog/nsxt when WEB_ONLY)
@@ -171,6 +202,25 @@ def load_config(config_path: Optional[str] = None) -> Config:
             raise ValueError("PG_DB or postgres.database must be set when Postgres is enabled")
         if not postgres_config.user:
             raise ValueError("PG_USER or postgres.user must be set when Postgres is enabled")
-    
-    return Config(syslog=syslog_config, nsxt=nsxt_config, influx=influx_config, postgres=postgres_config, web=web_config)
+
+    if oidc_config.enabled:
+        if not oidc_config.issuer:
+            raise ValueError("OIDC_ISSUER or oidc.issuer must be set when OIDC is enabled")
+        if not oidc_config.client_id:
+            raise ValueError("OIDC_CLIENT_ID or oidc.client_id must be set when OIDC is enabled")
+        if not oidc_config.client_secret:
+            raise ValueError("OIDC_CLIENT_SECRET or oidc.client_secret must be set when OIDC is enabled")
+        if not oidc_config.redirect_uri:
+            raise ValueError("OIDC_REDIRECT_URI or oidc.redirect_uri must be set when OIDC is enabled")
+        if not oidc_config.session_secret:
+            raise ValueError("OIDC_SESSION_SECRET (or WEB_SESSION_SECRET) must be set when OIDC is enabled")
+
+    return Config(
+        syslog=syslog_config,
+        nsxt=nsxt_config,
+        influx=influx_config,
+        postgres=postgres_config,
+        web=web_config,
+        oidc=oidc_config,
+    )
 

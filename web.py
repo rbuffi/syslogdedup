@@ -31,6 +31,21 @@ static_dir = Path(__file__).resolve().parent / "static"
 if static_dir.is_dir():
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
+if config.oidc.enabled:
+    from starlette.middleware.sessions import SessionMiddleware
+
+    from oidc_routes import OIDCAuthMiddleware, init_oidc, router as oidc_router
+
+    init_oidc(config.oidc)
+    app.add_middleware(OIDCAuthMiddleware, oidc_enabled=True)
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=config.oidc.session_secret,
+        same_site="lax",
+        https_only=False,
+    )
+    app.include_router(oidc_router)
+
 
 @app.get("/api/groups")
 def api_groups(

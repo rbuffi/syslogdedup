@@ -82,6 +82,10 @@ Alternatively, you can use environment variables:
 - `WEB_ONLY` (set to `true` to run only the web UI, without syslog/NSXT config)
 - `WEB_HOST` (default: 0.0.0.0)
 - `WEB_PORT` (default: 8080)
+- `OIDC_ENABLED` (default: false)
+- `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` (required when OIDC enabled)
+- `OIDC_SCOPE` (optional)
+- `OIDC_SESSION_SECRET` or `WEB_SESSION_SECRET` (required when OIDC enabled)
 
 ## Usage
 
@@ -103,6 +107,26 @@ WEB_ONLY=true uvicorn web:app --host 0.0.0.0 --port 8080
 ```
 
 Open `http://localhost:8080/`. Use the dropdowns to filter by **Source group** and **Dest group**. Rules are grouped by (source_group, dest_group). Click a port to use it later for injecting rules into NSX-T Manager.
+
+### OIDC login (Keycloak)
+
+Optional. When `oidc.enabled` is true in `config.yaml` (or `OIDC_ENABLED=true`), the UI and API require a signed session cookie after login via Keycloak.
+
+Configure in `config.yaml` (see `config.yaml.example`) or environment variables:
+
+| Variable | Meaning |
+|----------|---------|
+| `OIDC_ENABLED` | `true` to enable |
+| `OIDC_ISSUER` | Realm issuer URL, e.g. `https://keycloak.example.com/realms/myrealm` |
+| `OIDC_CLIENT_ID` | Confidential client ID |
+| `OIDC_CLIENT_SECRET` | Client secret |
+| `OIDC_REDIRECT_URI` | Full callback URL; must match Keycloak **Valid redirect URIs** exactly (e.g. `https://your-host/auth/callback`) |
+| `OIDC_SCOPE` | Optional; default `openid email profile` |
+| `OIDC_SESSION_SECRET` | Long random string used to sign the session cookie (or `WEB_SESSION_SECRET`) |
+
+In Keycloak: create a **confidential** client, enable **Standard flow**, set the redirect URI to the same value as `OIDC_REDIRECT_URI`, and copy the client secret.
+
+Paths without login: `/auth/login`, `/auth/callback`, `/auth/logout`, and `/static/*`. All other routes (including `/`, `/api/*`, `/docs`) require authentication.
 
 ## Log Format
 
