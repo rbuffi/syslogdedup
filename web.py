@@ -170,8 +170,7 @@ def api_nsx_create_rule(req: CreateRuleRequest):
         service_name = service_id
 
     rule_name = f"{source_group}_{dest_group}_{service_name}_{direction_raw}"
-    # Force a deterministic tag on every created rule.
-    label = "Regel aangemaakt door NSX microsegmentatie tool"
+    label = f"{policy_name}_{rule_name}" if policy_name else rule_name
 
     try:
         result = nsxt.create_firewall_rule(
