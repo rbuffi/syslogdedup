@@ -1,0 +1,23 @@
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    WEB_ONLY=true
+
+WORKDIR /app
+
+RUN useradd --create-home --shell /bin/bash appuser
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY *.py ./
+COPY static ./static/
+COPY docker-entrypoint-web.sh /docker-entrypoint-web.sh
+RUN chmod +x /docker-entrypoint-web.sh && chown -R appuser:appuser /app
+
+USER appuser
+
+EXPOSE 8080
+
+ENTRYPOINT ["/docker-entrypoint-web.sh"]

@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-firewall}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-firewall}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-firewall} -d ${POSTGRES_DB:-firewall}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    ports:
+      - "${WEB_PUBLISH_PORT:-8080}:8080"
+    environment:
+      WEB_ONLY: "true"
+      WEB_PORT: "8080"
+      PG_ENABLED: "true"
+      PG_HOST: postgres
+      PG_PORT: "5432"
+      PG_DB: ${POSTGRES_DB:-firewall}
+      PG_USER: ${POSTGRES_USER:-firewall}
+      PG_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Optional: syslog receiver — `docker compose --profile syslog up`
+  # Requires NSXT_* and SYSLOG_FORWARD_* (set in .env). Add `depends_on: [postgres]` if PG_ENABLED=true.
+  syslog:
+    profiles:
+      - syslog
+    build:
+      context: .
+      dockerfile: Dockerfile.syslog
+    ports:
+      - "${SYSLOG_UDP_PORT:-514}:${SYSLOG_UDP_PORT:-514}/udp"
+    environment:
+      SYSLOG_LISTEN_PORT: ${SYSLOG_UDP_PORT:-514}
+      SYSLOG_FORWARD_HOST: ${SYSLOG_FORWARD_HOST:?Set SYSLOG_FORWARD_HOST}
+      SYSLOG_FORWARD_PORT: ${SYSLOG_FORWARD_PORT:-514}
+      NSXT_HOST: ${NSXT_HOST:?Set NSXT_HOST}
+      NSXT_USERNAME: ${NSXT_USERNAME:?Set NSXT_USERNAME}
+      NSXT_PASSWORD: ${NSXT_PASSWORD:?Set NSXT_PASSWORD}
+      PG_ENABLED: ${SYSLOG_PG_ENABLED:-false}
+      PG_HOST: ${SYSLOG_PG_HOST:-postgres}
+      PG_PORT: "5432"
+      PG_DB: ${POSTGRES_DB:-firewall}
+      PG_USER: ${POSTGRES_USER:-firewall}
+      PG_PASSWORD: ${POSTGRES_PASSWORD:-}
+
+volumes:
+  pgdata:

@@ -87,6 +87,73 @@ Alternatively, you can use environment variables:
 - `OIDC_SCOPE` (optional)
 - `OIDC_SESSION_SECRET` or `WEB_SESSION_SECRET` (required when OIDC enabled)
 
+## Docker
+
+Two images are provided: **web UI** ([`Dockerfile.web`](Dockerfile.web)) and **syslog receiver** ([`Dockerfile.syslog`](Dockerfile.syslog)).
+
+### Build
+
+```bash
+docker build -f Dockerfile.web -t syslogdedup-web .
+docker build -f Dockerfile.syslog -t syslogdedup-syslog .
+```
+
+### Web UI with Compose (Postgres + app)
+
+1. Copy [`.env.example`](.env.example) to `.env` and set `POSTGRES_PASSWORD` (and optional `WEB_PUBLISH_PORT`).
+2. Start:
+
+   ```bash
+   docker compose up --build -d
+   ```
+
+3. Open `http://localhost:8080/` (or the host port you mapped).
+
+Set OIDC and other settings via environment variables on the `web` service (see below). **`OIDC_REDIRECT_URI`** must be the public URL users use to reach the app (e.g. `https://your-host/auth/callback`), matching Keycloak **Valid redirect URIs**.
+
+### Run web image without Compose
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e WEB_ONLY=true \
+  -e PG_ENABLED=true \
+  -e PG_HOST=your-postgres-host \
+  -e PG_DB=firewall -e PG_USER=firewall -e PG_PASSWORD=secret \
+  syslogdedup-web
+```
+
+### Syslog receiver image
+
+Runs `python main.py`. Map the **UDP** listen port (default 514; ports &lt;1024 often need root—the syslog image runs as root for that reason, or set `SYSLOG_LISTEN_PORT` to e.g. `1514` and map `1514:1514/udp`).
+
+```bash
+docker run --rm \
+  -p 514:514/udp \
+  -e SYSLOG_FORWARD_HOST=downstream.example.com \
+  -e NSXT_HOST=nsxt.example.com \
+  -e NSXT_USERNAME=admin -e NSXT_PASSWORD=secret \
+  syslogdedup-syslog
+```
+
+Optional: `docker compose --profile syslog up` starts the **syslog** service from [`docker-compose.yml`](docker-compose.yml); set `SYSLOG_FORWARD_HOST`, `NSXT_*`, and optionally Postgres-related vars if `SYSLOG_PG_ENABLED=true`.
+
+### Kubernetes
+
+Manifests live under [`k8s/`](k8s/). Typical flow:
+
+1. Build and push images (e.g. `syslogdedup-web`, `syslogdedup-syslog`) to your registry.
+2. Edit [`k8s/web-deployment.yaml`](k8s/web-deployment.yaml) `image:` to your registry/tags.
+3. Copy [`k8s/secret.example.yaml`](k8s/secret.example.yaml) to `k8s/secret.yaml`, set `postgres-password` (and OIDC or `nsxt-password` if needed). `k8s/secret.yaml` is gitignored.
+4. Apply Secret, then the rest:
+
+   ```bash
+   kubectl apply -f k8s/secret.yaml
+   kubectl apply -k k8s/
+   ```
+
+5. Optional HTTP ingress: edit and apply [`k8s/web-ingress.yaml`](k8s/web-ingress.yaml) (`ingressClassName`, host, TLS). Set `OIDC_REDIRECT_URI` to match the public URL (e.g. `https://<ingress-host>/auth/callback`).
+6. Optional UDP syslog: uncomment syslog resources in [`k8s/kustomization.yaml`](k8s/kustomization.yaml), configure [`k8s/syslog-deployment.yaml`](k8s/syslog-deployment.yaml), ensure Secret contains `nsxt-password`, push `syslogdedup-syslog` image.
+
 ## Usage
 
 Run the syslog server:
@@ -126,7 +193,7 @@ Configure in `config.yaml` (see `config.yaml.example`) or environment variables:
 
 In Keycloak: create a **confidential** client, enable **Standard flow**, set the redirect URI to the same value as `OIDC_REDIRECT_URI`, and copy the client secret.
 
-Paths without login: `/auth/login`, `/auth/callback`, `/auth/logout`, and `/static/*`. All other routes (including `/`, `/api/*`, `/docs`) require authentication.
+When OIDC is enabled, the home page loads without redirect; use **Log in** to start the Keycloak flow. Without a session, `/api/*` returns 401. Public paths include `/`, `/api/auth/status`, `/auth/*`, and `/static/*`.
 
 ## Log Format
 

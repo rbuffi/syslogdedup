@@ -25,6 +25,8 @@ wheels/
 
 # Configuration (contains sensitive data)
 config.yaml
+.env
+k8s/secret.yaml
 
 # IDE
 .vscode/

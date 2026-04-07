@@ -1,0 +1,76 @@
+# Optional: syslog receiver (UDP). Requires NSX-T and downstream syslog settings.
+# Apply after Secret contains nsxt-password (or mount config / extend Secret).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: syslogdedup-syslog
+  namespace: syslogdedup
+  labels:
+    app.kubernetes.io/name: syslogdedup-syslog
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: syslogdedup-syslog
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: syslogdedup-syslog
+    spec:
+      containers:
+        - name: syslog
+          image: syslogdedup-syslog:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: syslog-udp
+              containerPort: 514
+              protocol: UDP
+          env:
+            - name: SYSLOG_LISTEN_PORT
+              value: "514"
+            - name: SYSLOG_FORWARD_HOST
+              value: "downstream-syslog.example.com"
+            - name: SYSLOG_FORWARD_PORT
+              value: "514"
+            - name: NSXT_HOST
+              value: "nsxt-manager.example.com"
+            - name: NSXT_USERNAME
+              value: "admin"
+            - name: NSXT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: syslogdedup-app
+                  key: nsxt-password
+            - name: PG_ENABLED
+              value: "false"
+            # If writing flows to the same Postgres:
+            # - name: PG_ENABLED
+            #   value: "true"
+            # - name: PG_HOST
+            #   value: postgres.syslogdedup.svc.cluster.local
+            # - name: PG_PORT
+            #   value: "5432"
+            # - name: PG_DB
+            #   valueFrom:
+            #     configMapKeyRef:
+            #       name: syslogdedup-config
+            #       key: postgres-db
+            # - name: PG_USER
+            #   valueFrom:
+            #     configMapKeyRef:
+            #       name: syslogdedup-config
+            #       key: postgres-user
+            # - name: PG_PASSWORD
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: syslogdedup-app
+            #       key: postgres-password
+          securityContext:
+            runAsUser: 0
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"

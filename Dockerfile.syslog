@@ -1,0 +1,17 @@
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY *.py ./
+
+# UDP syslog often uses port 514; binding to ports <1024 typically requires root in Linux.
+# Use SYSLOG_LISTEN_PORT=1514 (or similar) with a non-root user, or run as root for 514.
+USER root
+
+CMD ["python", "main.py"]

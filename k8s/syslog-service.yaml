@@ -1,0 +1,17 @@
+# UDP syslog ingress to the cluster. Use LoadBalancer or NodePort on supported clouds.
+apiVersion: v1
+kind: Service
+metadata:
+  name: syslogdedup-syslog
+  namespace: syslogdedup
+  labels:
+    app.kubernetes.io/name: syslogdedup-syslog
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 514
+      targetPort: syslog-udp
+      protocol: UDP
+      name: syslog-udp
+  selector:
+    app.kubernetes.io/name: syslogdedup-syslog

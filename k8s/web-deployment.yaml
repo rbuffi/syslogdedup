@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: syslogdedup-web
+  namespace: syslogdedup
+  labels:
+    app.kubernetes.io/name: syslogdedup-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: syslogdedup-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: syslogdedup-web
+    spec:
+      containers:
+        - name: web
+          # Replace with your registry image after docker build & push
+          image: syslogdedup-web:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: WEB_ONLY
+              value: "true"
+            - name: WEB_PORT
+              value: "8080"
+            - name: PG_ENABLED
+              value: "true"
+            - name: PG_HOST
+              value: postgres
+            - name: PG_PORT
+              value: "5432"
+            - name: PG_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: syslogdedup-config
+                  key: postgres-db
+            - name: PG_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: syslogdedup-config
+                  key: postgres-user
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: syslogdedup-app
+                  key: postgres-password
+            # Uncomment and set Secret keys if using Keycloak (see secret.example.yaml)
+            # - name: OIDC_ENABLED
+            #   value: "true"
+            # - name: OIDC_ISSUER
+            #   value: "https://keycloak.example.com/realms/myrealm"
+            # - name: OIDC_CLIENT_ID
+            #   value: "firewall-ui"
+            # - name: OIDC_CLIENT_SECRET
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: syslogdedup-app
+            #       key: oidc-client-secret
+            # - name: OIDC_REDIRECT_URI
+            #   value: "https://your-ingress-host.example.com/auth/callback"
+            # - name: OIDC_SESSION_SECRET
+            #   valueFrom:
+            #     secretKeyRef:
+            #       name: syslogdedup-app
+            #       key: oidc-session-secret
+          readinessProbe:
+            httpGet:
+              path: /api/auth/status
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/auth/status
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "50m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

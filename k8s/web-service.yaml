@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: syslogdedup-web
+  namespace: syslogdedup
+  labels:
+    app.kubernetes.io/name: syslogdedup-web
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      name: http
+  selector:
+    app.kubernetes.io/name: syslogdedup-web
