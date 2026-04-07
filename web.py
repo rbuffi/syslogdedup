@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -45,6 +45,16 @@ if config.oidc.enabled:
         https_only=False,
     )
     app.include_router(oidc_router)
+
+
+@app.get("/api/auth/status")
+def api_auth_status(request: Request):
+    """Public: OIDC flag and whether the session has a logged-in user (for login/logout UI)."""
+    if not config.oidc.enabled:
+        return {"oidc_enabled": False, "authenticated": False}
+    session = getattr(request, "session", None)
+    authenticated = bool(session and session.get("user"))
+    return {"oidc_enabled": True, "authenticated": authenticated}
 
 
 @app.get("/api/groups")

@@ -33,7 +33,7 @@ def init_oidc(cfg: OidcConfig) -> None:
 
 def is_oidc_public_path(path: str) -> bool:
     """Paths that do not require an authenticated session when OIDC is enabled."""
-    if path in ("/favicon.ico",):
+    if path in ("/", "/favicon.ico", "/api/auth/status"):
         return True
     if path.startswith("/static"):
         return True
@@ -43,7 +43,7 @@ def is_oidc_public_path(path: str) -> bool:
 
 
 class OIDCAuthMiddleware(BaseHTTPMiddleware):
-    """When enabled, require a session for all routes except /static and /auth/*."""
+    """When enabled, require a session except /, /static, /auth/*, and /api/auth/status."""
 
     def __init__(self, app, oidc_enabled: bool = False):
         super().__init__(app)
@@ -60,7 +60,7 @@ class OIDCAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if path.startswith("/api"):
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
-        return RedirectResponse(url="/auth/login", status_code=302)
+        return RedirectResponse(url="/", status_code=302)
 
 
 @router.get("/login")

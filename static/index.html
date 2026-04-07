@@ -25,7 +25,17 @@
       padding: 1rem 1.5rem;
       min-height: 100vh;
     }
-    h1 { font-size: 1.25rem; font-weight: 600; margin: 0 0 1rem 0; }
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+    .page-header h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+    .header-actions { display: flex; align-items: center; gap: 0.5rem; }
+    #logoutBtn, #loginBtn { text-decoration: none; }
     .filters {
       display: flex;
       gap: 1rem;
@@ -200,7 +210,14 @@
   </style>
 </head>
 <body>
-  <h1>Firewall rules</h1>
+  <header class="page-header">
+    <h1>Firewall rules</h1>
+    <div class="header-actions">
+      <a id="loginBtn" href="/auth/login" class="btn btn-primary" style="display: none;" role="button">Log in</a>
+      <a id="logoutBtn" href="/auth/logout" class="btn btn-ghost" style="display: none;" role="button">Logout</a>
+    </div>
+  </header>
+  <p id="loginHint" class="hint" style="display: none;">Log in om firewallgegevens te bekijken.</p>
   <div class="filters">
     <label>
       Source group
@@ -320,6 +337,16 @@
     const ruleError = document.getElementById('ruleError');
     const ruleCancelBtn = document.getElementById('ruleCancelBtn');
     const ruleSubmitBtn = document.getElementById('ruleSubmitBtn');
+    const loginBtn = document.getElementById('loginBtn');
+    const logoutBtn = document.getElementById('logoutBtn');
+    const loginHint = document.getElementById('loginHint');
+
+    /** Set after /api/auth/status: OIDC off → data allowed; OIDC on → need session. */
+    let authState = { oidcEnabled: false, authenticated: true };
+
+    function requireAuthForData() {
+      return !authState.oidcEnabled || authState.authenticated;
+    }
 
     let allSourceGroups = [];
     let allDestGroups = [];
@@ -361,6 +388,12 @@
     }
 
     async function loadGroups() {
+      if (!requireAuthForData()) {
+        tableWrap.innerHTML = '<p class="hint">Log in om groepen en regels te laden.</p>';
+        sourceSelect.innerHTML = '<option value="">All</option>';
+        destSelect.innerHTML = '<option value="">All</option>';
+        return;
+      }
       try {
         const currentSource = sourceSelect.value;
         const currentDest = destSelect.value;
@@ -468,6 +501,11 @@
     }
 
     async function loadRules() {
+      if (!requireAuthForData()) {
+        tableWrap.innerHTML = '<p class="hint">Log in om firewallgegevens te bekijken.</p>';
+        detailsWrap.innerHTML = '';
+        return;
+      }
       const sourceGroup = sourceSelect.value.trim();
       const destGroup = destSelect.value.trim();
       const hours = parseInt(hoursSelect.value || '0', 10) || 0;
@@ -635,6 +673,10 @@
     }
 
     async function loadDetailsForPair(sg, dg) {
+      if (!requireAuthForData()) {
+        showError('Log in om details te bekijken.');
+        return;
+      }
       const hours = parseInt(hoursSelect.value || '0', 10) || 0;
       const srcIp = srcIpFilter.value.trim();
       const destIp = destIpFilter.value.trim();
@@ -849,7 +891,37 @@
       }
     });
 
-    loadGroups();
+    async function initAuthUi() {
+      try {
+        const r = await fetch('/api/auth/status');
+        if (!r.ok) return;
+        const data = await r.json();
+        authState.oidcEnabled = !!data.oidc_enabled;
+        authState.authenticated = !data.oidc_enabled || !!data.authenticated;
+        if (data.oidc_enabled) {
+          if (data.authenticated) {
+            if (logoutBtn) logoutBtn.style.display = 'inline-block';
+            if (loginBtn) loginBtn.style.display = 'none';
+            if (loginHint) loginHint.style.display = 'none';
+          } else {
+            if (loginBtn) loginBtn.style.display = 'inline-block';
+            if (logoutBtn) logoutBtn.style.display = 'none';
+            if (loginHint) loginHint.style.display = 'block';
+          }
+        } else {
+          if (loginBtn) loginBtn.style.display = 'none';
+          if (logoutBtn) logoutBtn.style.display = 'none';
+          if (loginHint) loginHint.style.display = 'none';
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    }
+
+    (async function boot() {
+      await initAuthUi();
+      await loadGroups();
+    })();
   </script>
 </body>
 </html>
