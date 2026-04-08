@@ -49,7 +49,11 @@ class SyslogServer:
         self.parser = LogParser()
         self.deduplicator = Deduplicator()
         self.nsxt_client = NSXTClient(config.nsxt)
-        self.forwarder = SyslogForwarder(config.syslog)
+        self.forwarder: Optional[SyslogForwarder] = None
+        if config.syslog.forward_enabled:
+            self.forwarder = SyslogForwarder(config.syslog)
+        else:
+            logger.info("Syslog forwarding is disabled (SYSLOG_FORWARD_ENABLED=false)")
         self.influx_client = InfluxClient(config.influx)
         self.pg_client = PostgresClient(config.postgres)
         self.socket = None
@@ -162,12 +166,13 @@ class SyslogServer:
             )
         
         # Forward the enriched log, but keep the original syslog header/line
-        if self.forwarder.forward(parsed_log, source_groups, dest_groups, raw_line=raw_line):
-            self.stats['forwarded'] += 1
-            logger.debug(f"Forwarded log: {parsed_log.source_ip}->{parsed_log.dest_ip}")
-        else:
-            self.stats['errors'] += 1
-            logger.warning(f"Failed to forward log: {parsed_log.source_ip}->{parsed_log.dest_ip}")
+        if self.forwarder is not None:
+            if self.forwarder.forward(parsed_log, source_groups, dest_groups, raw_line=raw_line):
+                self.stats['forwarded'] += 1
+                logger.debug(f"Forwarded log: {parsed_log.source_ip}->{parsed_log.dest_ip}")
+            else:
+                self.stats['errors'] += 1
+                logger.warning(f"Failed to forward log: {parsed_log.source_ip}->{parsed_log.dest_ip}")
 
         # Write to InfluxDB (best-effort, non-blocking on failure)
         try:
@@ -247,7 +252,8 @@ class SyslogServer:
             except Exception:
                 pass
         
-        self.forwarder.close()
+        if self.forwarder is not None:
+            self.forwarder.close()
         self._print_stats()
         logger.info("Shutdown complete.")
 

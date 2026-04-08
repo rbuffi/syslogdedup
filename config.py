@@ -5,10 +5,27 @@ from typing import Optional
 from dataclasses import dataclass, field
 
 
+def normalize_web_base_path(raw: str) -> str:
+    """
+    Public URL path prefix for the web UI behind a reverse proxy (no trailing slash).
+    Empty string means the app is served at the domain root.
+    """
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    if "//" in s:
+        raise ValueError("WEB_BASE_PATH must not contain '//'")
+    if not s.startswith("/"):
+        s = "/" + s
+    s = s.rstrip("/")
+    return s
+
+
 @dataclass
 class SyslogConfig:
     """Syslog server configuration."""
     listen_port: int = 514
+    forward_enabled: bool = True
     forward_host: str = ""
     forward_port: int = 514
     use_tcp: bool = False
@@ -54,6 +71,7 @@ class WebConfig:
     """Web UI / API server configuration."""
     host: str = "0.0.0.0"
     port: int = 8080
+    web_base_path: str = ""
 
 
 @dataclass
@@ -105,6 +123,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
     # Override with environment variables if present
     syslog_config = SyslogConfig(
         listen_port=int(os.getenv('SYSLOG_LISTEN_PORT', config_data.get('syslog', {}).get('listen_port', 514))),
+        forward_enabled=os.getenv(
+            'SYSLOG_FORWARD_ENABLED',
+            str(config_data.get('syslog', {}).get('forward_enabled', True))
+        ).lower() == 'true',
         forward_host=os.getenv('SYSLOG_FORWARD_HOST', config_data.get('syslog', {}).get('forward_host', '')),
         forward_port=int(os.getenv('SYSLOG_FORWARD_PORT', config_data.get('syslog', {}).get('forward_port', 514))),
         use_tcp=os.getenv(
@@ -150,9 +172,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
     )
 
     web_cfg = config_data.get('web', {})
+    web_base_path_raw = os.getenv('WEB_BASE_PATH', web_cfg.get('base_path', ''))
     web_config = WebConfig(
         host=os.getenv('WEB_HOST', web_cfg.get('host', '0.0.0.0')),
         port=int(os.getenv('WEB_PORT', web_cfg.get('port', 8080))),
+        web_base_path=normalize_web_base_path(web_base_path_raw),
     )
 
     oidc_cfg = config_data.get('oidc', {})
@@ -176,7 +200,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
 
     # Validate required fields (skip syslog/nsxt when WEB_ONLY)
     if not web_only:
-        if not syslog_config.forward_host:
+        if syslog_config.forward_enabled and not syslog_config.forward_host:
             raise ValueError("SYSLOG_FORWARD_HOST or syslog.forward_host must be set")
         if not nsxt_config.host:
             raise ValueError("NSXT_HOST or nsxt.host must be set")

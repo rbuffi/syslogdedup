@@ -58,7 +58,8 @@ postgres:
 
 Alternatively, you can use environment variables:
 - `SYSLOG_LISTEN_PORT` (default: 514)
-- `SYSLOG_FORWARD_HOST` (required)
+- `SYSLOG_FORWARD_ENABLED` (default: true; set to `false` to disable downstream forwarding)
+- `SYSLOG_FORWARD_HOST` (required when forwarding enabled)
 - `SYSLOG_FORWARD_PORT` (default: 514)
 - `SYSLOG_FORWARD_USE_TCP` (default: false)
 - `NSXT_HOST` (required)
@@ -82,6 +83,7 @@ Alternatively, you can use environment variables:
 - `WEB_ONLY` (set to `true` to run only the web UI, without syslog/NSXT config)
 - `WEB_HOST` (default: 0.0.0.0)
 - `WEB_PORT` (default: 8080)
+- `WEB_BASE_PATH` (optional; e.g. `/syslogdedup` when the UI is served under an ingress subpath; no trailing slash)
 - `OIDC_ENABLED` (default: false)
 - `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` (required when OIDC enabled)
 - `OIDC_SCOPE` (optional)
@@ -110,6 +112,8 @@ docker build -f Dockerfile.syslog -t syslogdedup-syslog .
 3. Open `http://localhost:8080/` (or the host port you mapped).
 
 Set OIDC and other settings via environment variables on the `web` service (see below). **`OIDC_REDIRECT_URI`** must be the public URL users use to reach the app (e.g. `https://your-host/auth/callback`), matching Keycloak **Valid redirect URIs**.
+
+**Subpath (`WEB_BASE_PATH`):** When set, the app is also mounted at that URL path (e.g. `WEB_BASE_PATH=/app` → UI at `https://host/app/`). The UI and API calls use the same prefix. Set **`OIDC_REDIRECT_URI`** to the full callback URL including the path (e.g. `https://host/app/auth/callback`). You can either route that path to this service in your ingress or rely on the in-app mount without rewriting the path.
 
 ### Run web image without Compose
 

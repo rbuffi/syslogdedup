@@ -3,6 +3,7 @@
 
 syslog:
   listen_port: 514  # UDP port to listen on (requires root/sudo for port < 1024)
+  forward_enabled: true  # Set to false to disable downstream syslog forwarding
   forward_host: "downstream-syslog.example.com"  # Downstream syslog server hostname or IP
   forward_port: 514  # Downstream syslog server port
   use_tcp: false  # Set to true to forward logs over TCP instead of UDP
@@ -32,13 +33,17 @@ postgres:
   password: "your-password-here"
   table: "flows"
 
+# Optional: public URL path prefix when the Web UI is behind a reverse proxy subpath (same as WEB_BASE_PATH env).
+# web:
+#   base_path: "/syslogdedup"
+
 # Optional: OIDC login for the Web UI (e.g. Keycloak). When enabled, / and /api/* require a session.
 # oidc:
 #   enabled: true
 #   issuer: "https://keycloak.example.com/realms/myrealm"
 #   client_id: "firewall-ui"
 #   client_secret: "your-client-secret"
-#   redirect_uri: "http://localhost:8080/auth/callback"
+#   redirect_uri: "http://localhost:8080/auth/callback"  # include web.base_path if used, e.g. http://localhost:8080/syslog/auth/callback
 #   scope: "openid email profile"
 #   session_secret: "long-random-string-for-cookie-signing"
 

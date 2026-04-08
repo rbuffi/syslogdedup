@@ -13,14 +13,25 @@ logger = logging.getLogger(__name__)
 
 oauth = OAuth()
 _oidc_cfg: Optional[OidcConfig] = None
+_web_base_path: str = ""
 
 router = APIRouter(prefix="/auth", tags=["oidc"])
 
 
-def init_oidc(cfg: OidcConfig) -> None:
+def _url_with_base(path: str) -> str:
+    """Build absolute path for redirects. path must start with /."""
+    if not path.startswith("/"):
+        path = "/" + path
+    if not _web_base_path:
+        return path
+    return _web_base_path.rstrip("/") + path
+
+
+def init_oidc(cfg: OidcConfig, web_base_path: str = "") -> None:
     """Register the OIDC client (Keycloak realm discovery). Call once at startup."""
-    global _oidc_cfg
+    global _oidc_cfg, _web_base_path
     _oidc_cfg = cfg
+    _web_base_path = web_base_path or ""
     issuer = cfg.issuer.rstrip("/")
     oauth.register(
         name="keycloak",
@@ -60,7 +71,7 @@ class OIDCAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if path.startswith("/api"):
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
-        return RedirectResponse(url="/", status_code=302)
+        return RedirectResponse(url=_url_with_base("/"), status_code=302)
 
 
 @router.get("/login")
@@ -89,10 +100,10 @@ async def oidc_callback(request: Request):
         request.session["user"] = {"sub": token.get("sub") or ""}
     if token.get("id_token"):
         request.session["id_token"] = token["id_token"]
-    return RedirectResponse(url="/", status_code=302)
+    return RedirectResponse(url=_url_with_base("/"), status_code=302)
 
 
 @router.get("/logout")
 async def oidc_logout(request: Request):
     request.session.clear()
-    return RedirectResponse(url="/", status_code=302)
+    return RedirectResponse(url=_url_with_base("/"), status_code=302)

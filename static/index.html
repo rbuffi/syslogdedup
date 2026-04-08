@@ -213,8 +213,8 @@
   <header class="page-header">
     <h1>Firewall rules</h1>
     <div class="header-actions">
-      <a id="loginBtn" href="/auth/login" class="btn btn-primary" style="display: none;" role="button">Log in</a>
-      <a id="logoutBtn" href="/auth/logout" class="btn btn-ghost" style="display: none;" role="button">Logout</a>
+      <a id="loginBtn" href="#" class="btn btn-primary" style="display: none;" role="button">Log in</a>
+      <a id="logoutBtn" href="#" class="btn btn-ghost" style="display: none;" role="button">Logout</a>
     </div>
   </header>
   <p id="loginHint" class="hint" style="display: none;">Log in om firewallgegevens te bekijken.</p>
@@ -314,6 +314,12 @@
   </div>
 
   <script>
+    const BASE = (typeof window.__BASE_PATH__ === 'string' ? window.__BASE_PATH__ : '').replace(/\/$/, '');
+    function appUrl(path) {
+      if (!path.startsWith('/')) path = '/' + path;
+      return BASE ? (BASE + path) : path;
+    }
+
     const sourceSelect = document.getElementById('sourceGroup');
     const destSelect = document.getElementById('destGroup');
     const hoursSelect = document.getElementById('hoursSelect');
@@ -340,6 +346,8 @@
     const loginBtn = document.getElementById('loginBtn');
     const logoutBtn = document.getElementById('logoutBtn');
     const loginHint = document.getElementById('loginHint');
+    if (loginBtn) loginBtn.href = appUrl('/auth/login');
+    if (logoutBtn) logoutBtn.href = appUrl('/auth/logout');
 
     /** Set after /api/auth/status: OIDC off → data allowed; OIDC on → need session. */
     let authState = { oidcEnabled: false, authenticated: true };
@@ -373,13 +381,13 @@
       const d = (destIp || '').trim();
       const out = { source_groups: [], dest_groups: [] };
       if (s) {
-        const r = await fetch('/api/groups?' + new URLSearchParams({ src_ip: s }));
+        const r = await fetch(appUrl('/api/groups') + '?' + new URLSearchParams({ src_ip: s }));
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         out.source_groups = data.source_groups || [];
       }
       if (d) {
-        const r = await fetch('/api/groups?' + new URLSearchParams({ dest_ip: d }));
+        const r = await fetch(appUrl('/api/groups') + '?' + new URLSearchParams({ dest_ip: d }));
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         out.dest_groups = data.dest_groups || [];
@@ -403,7 +411,7 @@
         if (srcIp) params.set('src_ip', srcIp);
         if (destIp) params.set('dest_ip', destIp);
         const suffix = params.toString();
-        const r = await fetch('/api/groups' + (suffix ? ('?' + suffix) : ''));
+        const r = await fetch(appUrl('/api/groups') + (suffix ? ('?' + suffix) : ''));
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         const sg = data.source_groups || [];
@@ -529,7 +537,7 @@
         if (srcIp) params.set('src_ip', srcIp);
         if (destIp) params.set('dest_ip', destIp);
         if (port) params.set('dest_port', port);
-        const r = await fetch('/api/rules/grouped?' + params.toString());
+        const r = await fetch(appUrl('/api/rules/grouped') + '?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
         renderGroupedTable(rows);
@@ -607,7 +615,7 @@
     async function ensurePoliciesLoaded() {
       if (cachedPolicies) return cachedPolicies;
       try {
-        const r = await fetch('/api/nsx/policies');
+        const r = await fetch(appUrl('/api/nsx/policies'));
         if (!r.ok) throw new Error(r.statusText);
         cachedPolicies = await r.json();
       } catch (e) {
@@ -619,7 +627,7 @@
     async function ensureServicesLoaded() {
       if (cachedServices) return cachedServices;
       try {
-        const r = await fetch('/api/nsx/services');
+        const r = await fetch(appUrl('/api/nsx/services'));
         if (!r.ok) throw new Error(r.statusText);
         cachedServices = await r.json();
       } catch (e) {
@@ -691,7 +699,7 @@
         if (srcIp) params.set('src_ip', srcIp);
         if (destIp) params.set('dest_ip', destIp);
         if (port) params.set('dest_port', port);
-        const r = await fetch('/api/rules?' + params.toString());
+        const r = await fetch(appUrl('/api/rules') + '?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
         detailsWrap.innerHTML = '<p class="hint">Details for ' + escapeHtml(sg || '—') + ' → ' + escapeHtml(dg || '—') + ' (max ' + rows.length + ' flows)</p>';
@@ -849,7 +857,7 @@
           protocol: ruleContext.protocol || null,
           comment: comment || null
         };
-        const r = await fetch('/api/nsx/rules', {
+        const r = await fetch(appUrl('/api/nsx/rules'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -893,7 +901,7 @@
 
     async function initAuthUi() {
       try {
-        const r = await fetch('/api/auth/status');
+        const r = await fetch(appUrl('/api/auth/status'));
         if (!r.ok) return;
         const data = await r.json();
         authState.oidcEnabled = !!data.oidc_enabled;

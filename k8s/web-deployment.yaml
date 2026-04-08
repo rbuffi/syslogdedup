@@ -28,6 +28,9 @@ spec:
               value: "true"
             - name: WEB_PORT
               value: "8080"
+            # Optional: ingress subpath (no trailing slash), e.g. /syslogdedup — set OIDC_REDIRECT_URI to match (…/auth/callback)
+            # - name: WEB_BASE_PATH
+            #   value: "/syslogdedup"
             - name: PG_ENABLED
               value: "true"
             - name: PG_HOST
