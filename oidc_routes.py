@@ -1,5 +1,6 @@
 """OIDC (Keycloak) login routes and optional auth middleware for the Web UI."""
 import logging
+from collections.abc import Hashable
 from typing import Optional
 
 from authlib.integrations.starlette_client import OAuth
@@ -11,7 +12,29 @@ from config import OidcConfig
 
 logger = logging.getLogger(__name__)
 
-oauth = OAuth()
+
+class _OAuthStateCache:
+    """Store OAuth/PKCE state outside the session cookie (Authlib async cache API).
+
+    Long authorize URLs + PKCE + a long redirect_uri (e.g. with WEB_BASE_PATH) can
+    exceed cookie/header limits when state is kept only in SessionMiddleware.
+    For multiple replicas or workers, replace with a shared cache (e.g. Redis).
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[str, str] = {}
+
+    async def get(self, key: Hashable) -> Optional[str]:
+        return self._store.get(str(key))
+
+    async def set(self, key: Hashable, value: str, expires_in: Optional[int] = None) -> None:
+        self._store[str(key)] = value
+
+    async def delete(self, key: Hashable) -> None:
+        self._store.pop(str(key), None)
+
+
+oauth = OAuth(cache=_OAuthStateCache())
 _oidc_cfg: Optional[OidcConfig] = None
 _web_base_path: str = ""
 
