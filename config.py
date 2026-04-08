@@ -85,6 +85,8 @@ class OidcConfig:
     redirect_uri: str = ""
     scope: str = "openid email profile"
     session_secret: str = ""
+    # Verify TLS for HTTPS calls to the issuer (discovery, token endpoint). Set false for internal CAs via OIDC_SSL_VERIFY.
+    ssl_verify: bool = True
 
 
 @dataclass
@@ -194,6 +196,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
             'OIDC_SESSION_SECRET',
             os.getenv('WEB_SESSION_SECRET', oidc_cfg.get('session_secret', '')),
         ).strip(),
+        ssl_verify=os.getenv(
+            'OIDC_SSL_VERIFY',
+            str(oidc_cfg.get('ssl_verify', True)),
+        ).lower()
+        == 'true',
     )
 
     web_only = os.getenv('WEB_ONLY', '').lower() == 'true'

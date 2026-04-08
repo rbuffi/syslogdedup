@@ -44,6 +44,7 @@ postgres:
 #   client_id: "firewall-ui"
 #   client_secret: "your-client-secret"
 #   redirect_uri: "http://localhost:8080/auth/callback"  # include web.base_path if used, e.g. http://localhost:8080/syslog/auth/callback
+#   ssl_verify: true   # set false or OIDC_SSL_VERIFY=false if Keycloak uses a private CA
 #   scope: "openid email profile"
 #   session_secret: "long-random-string-for-cookie-signing"
 

@@ -71,6 +71,9 @@ spec:
             #     secretKeyRef:
             #       name: syslogdedup-app
             #       key: oidc-session-secret
+            # If Keycloak uses an untrusted / private CA for HTTPS:
+            # - name: OIDC_SSL_VERIFY
+            #   value: "false"
           readinessProbe:
             httpGet:
               path: /api/auth/status

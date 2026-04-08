@@ -1,5 +1,6 @@
 """OIDC (Keycloak) login routes and optional auth middleware for the Web UI."""
 import logging
+import os
 from collections.abc import Hashable
 from typing import Optional
 
@@ -56,22 +57,21 @@ def init_oidc(cfg: OidcConfig, web_base_path: str = "") -> None:
     _oidc_cfg = cfg
     _web_base_path = web_base_path or ""
     issuer = cfg.issuer.rstrip("/")
+    client_kwargs: dict = {"scope": cfg.scope}
+    if not cfg.ssl_verify:
+        client_kwargs["verify"] = False
     oauth.register(
         name="keycloak",
         client_id=cfg.client_id,
         client_secret=cfg.client_secret,
         server_metadata_url=f"{issuer}/.well-known/openid-configuration",
-        client_kwargs={"scope": cfg.scope},
+        client_kwargs=client_kwargs,
     )
 
 
-def _inner_path_for_auth(request: Request) -> str:
-    """Path relative to the mounted app (/api/..., /) for auth checks.
-
-    When WEB_BASE_PATH is set, some stacks expose the full URL path (e.g. /prefix/)
-    instead of mount-relative (/). Stripping the prefix avoids redirect loops on /.
-    """
-    raw = request.url.path or "/"
+def _strip_web_base(raw: str) -> str:
+    """Normalize to inner-app path: /api/..., /auth/..., /."""
+    raw = raw or "/"
     base = _web_base_path.rstrip("/") if _web_base_path else ""
     if not base:
         return raw
@@ -80,6 +80,21 @@ def _inner_path_for_auth(request: Request) -> str:
     if raw.startswith(base + "/"):
         return raw[len(base) :]
     return raw
+
+
+def _inner_path_for_auth(request: Request) -> str:
+    """Path relative to the mounted app (/api/..., /) for auth checks.
+
+    Prefer scope['path'] (correct after Starlette Mount). Strip WEB_BASE_PATH when the
+    path still includes the public prefix (some proxies or misconfigured mounts).
+    """
+    scope_path = request.scope.get("path")
+    if scope_path is not None and scope_path != "":
+        p = scope_path if scope_path.startswith("/") else "/" + scope_path
+        if not p:
+            p = "/"
+        return _strip_web_base(p)
+    return _strip_web_base(request.url.path or "/")
 
 
 def is_oidc_public_path(path: str) -> bool:
@@ -118,7 +133,20 @@ class OIDCAuthMiddleware(BaseHTTPMiddleware):
 async def oidc_login(request: Request):
     if _oidc_cfg is None:
         raise RuntimeError("OIDC is not initialized")
-    return await oauth.keycloak.authorize_redirect(request, _oidc_cfg.redirect_uri)
+    try:
+        return await oauth.keycloak.authorize_redirect(request, _oidc_cfg.redirect_uri)
+    except Exception as e:
+        logger.exception("OIDC authorize_redirect failed: %s", e)
+        body = {
+            "detail": "OIDC login failed",
+            "error": str(e),
+            "error_type": type(e).__name__,
+        }
+        if os.getenv("OIDC_DEBUG", "").lower() in ("1", "true", "yes"):
+            import traceback
+
+            body["traceback"] = traceback.format_exc()
+        return JSONResponse(status_code=502, content=body)
 
 
 @router.get("/callback")

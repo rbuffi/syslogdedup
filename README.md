@@ -88,6 +88,7 @@ Alternatively, you can use environment variables:
 - `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` (required when OIDC enabled)
 - `OIDC_SCOPE` (optional)
 - `OIDC_SESSION_SECRET` or `WEB_SESSION_SECRET` (required when OIDC enabled)
+- `OIDC_SSL_VERIFY` (optional; default `true`; set `false` if the issuer uses a certificate your pod does not trust)
 
 ## Docker
 
@@ -194,6 +195,7 @@ Configure in `config.yaml` (see `config.yaml.example`) or environment variables:
 | `OIDC_REDIRECT_URI` | Full callback URL; must match Keycloak **Valid redirect URIs** exactly (e.g. `https://your-host/auth/callback`) |
 | `OIDC_SCOPE` | Optional; default `openid email profile` |
 | `OIDC_SESSION_SECRET` | Long random string used to sign the session cookie (or `WEB_SESSION_SECRET`) |
+| `OIDC_SSL_VERIFY` | `true` (default) or `false` to skip TLS verification for HTTPS calls to the issuer (private CA only) |
 
 In Keycloak: create a **confidential** client, enable **Standard flow**, set the redirect URI to the same value as `OIDC_REDIRECT_URI`, and copy the client secret.
 
