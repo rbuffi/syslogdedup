@@ -42,6 +42,23 @@ def init_oidc(cfg: OidcConfig, web_base_path: str = "") -> None:
     )
 
 
+def _inner_path_for_auth(request: Request) -> str:
+    """Path relative to the mounted app (/api/..., /) for auth checks.
+
+    When WEB_BASE_PATH is set, some stacks expose the full URL path (e.g. /prefix/)
+    instead of mount-relative (/). Stripping the prefix avoids redirect loops on /.
+    """
+    raw = request.url.path or "/"
+    base = _web_base_path.rstrip("/") if _web_base_path else ""
+    if not base:
+        return raw
+    if raw == base or raw == base + "/":
+        return "/"
+    if raw.startswith(base + "/"):
+        return raw[len(base) :]
+    return raw
+
+
 def is_oidc_public_path(path: str) -> bool:
     """Paths that do not require an authenticated session when OIDC is enabled."""
     if path in ("/", "/favicon.ico", "/api/auth/status"):
@@ -63,7 +80,7 @@ class OIDCAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         if not self.oidc_enabled:
             return await call_next(request)
-        path = request.url.path
+        path = _inner_path_for_auth(request)
         if is_oidc_public_path(path):
             return await call_next(request)
         user = request.session.get("user")
