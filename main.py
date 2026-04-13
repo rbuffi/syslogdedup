@@ -3,6 +3,7 @@
 import logging
 import signal
 import socket
+import struct
 import sys
 from typing import List, Optional, Tuple
 from config import load_config, Config
@@ -65,8 +66,10 @@ class SyslogServer:
             'parsed': 0,
             'duplicates': 0,
             'forwarded': 0,
-            'errors': 0
+            'errors': 0,
+            'dropped': 0,
         }
+        self._last_kernel_drop_total: Optional[int] = None
     
     def _setup_socket(self):
         """Create and bind UDP socket."""
@@ -74,6 +77,16 @@ class SyslogServer:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.socket.bind(('0.0.0.0', self.config.syslog.listen_port))
+            try:
+                # Raise UDP receive buffer to reduce loss under bursty ingress.
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 * 1024 * 1024)
+            except OSError as e:
+                logger.warning(f"Failed to set UDP receive buffer size: {e}")
+            try:
+                actual_rcvbuf = self.socket.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
+                logger.info(f"UDP receive buffer size (SO_RCVBUF): {actual_rcvbuf} bytes")
+            except OSError as e:
+                logger.warning(f"Failed to read UDP receive buffer size: {e}")
             logger.info(f"Syslog server listening on UDP port {self.config.syslog.listen_port}")
         except PermissionError:
             logger.error(f"Permission denied: Cannot bind to port {self.config.syslog.listen_port}. "
@@ -196,7 +209,8 @@ class SyslogServer:
                    f"Parsed: {self.stats['parsed']}, "
                    f"Duplicates: {self.stats['duplicates']}, "
                    f"Forwarded: {self.stats['forwarded']}, "
-                   f"Errors: {self.stats['errors']}")
+                   f"Errors: {self.stats['errors']}, "
+                   f"Dropped: {self.stats['dropped']}")
     
     def run(self):
         """Run the syslog server main loop."""
@@ -208,9 +222,28 @@ class SyslogServer:
         try:
             while self.running:
                 try:
-                    # Receive UDP packet (max 65507 bytes for UDP)
-                    data, addr = self.socket.recvfrom(65507)
+                    # Receive UDP packet (max 65507 bytes for UDP) plus Linux
+                    # ancillary data (e.g., SO_RXQ_OVFL kernel drop counter).
+                    data, ancdata, _flags, addr = self.socket.recvmsg(65507, 1024)
                     raw_line = data.decode('utf-8', errors='replace')
+
+                    # Linux-specific: if the kernel receive queue overflows, it
+                    # reports a cumulative dropped-packet counter via SO_RXQ_OVFL.
+                    if hasattr(socket, "SO_RXQ_OVFL"):
+                        for level, ctype, cdata in ancdata:
+                            if level == socket.SOL_SOCKET and ctype == socket.SO_RXQ_OVFL and len(cdata) >= 4:
+                                kernel_total = struct.unpack("I", cdata[:4])[0]
+                                if self._last_kernel_drop_total is not None and kernel_total >= self._last_kernel_drop_total:
+                                    delta = kernel_total - self._last_kernel_drop_total
+                                    if delta > 0:
+                                        self.stats['dropped'] += delta
+                                        logger.warning(
+                                            "Kernel UDP receive queue overflow detected; "
+                                            "dropped +%d (total=%d)",
+                                            delta,
+                                            self.stats['dropped'],
+                                        )
+                                self._last_kernel_drop_total = kernel_total
 
                     # Always log the full raw line at DEBUG level
                     logger.debug(f"Raw syslog from {addr}: {raw_line!r}")
