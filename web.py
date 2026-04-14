@@ -196,7 +196,8 @@ def create_inner_app() -> FastAPI:
             # Fall back to service_id if listing fails
             service_name = service_id
 
-        rule_name = f"{source_group}_{dest_group}_{service_name}_{direction_raw}"
+        direction_for_name = direction_raw.replace("/", "-")
+        rule_name = f"{source_group}_{dest_group}_{service_name}_{direction_for_name}"
         label = f"{policy_name}_{rule_name}" if policy_name else rule_name
 
         try:
