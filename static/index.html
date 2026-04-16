@@ -721,8 +721,9 @@
       const sgText = ruleContext.sourceGroup || '—';
       const dgText = ruleContext.destGroup || '—';
       const portText = ruleContext.port || '—';
+      const protocolText = normalizeL4Protocol(ruleContext.protocol) || '—';
       ruleModalContext.textContent =
-        'Source: ' + sgText + '  →  Destination: ' + dgText + '  |  Port ' + portText;
+        'Source: ' + sgText + '  →  Destination: ' + dgText + '  |  Port ' + portText + '  |  Protocol ' + protocolText;
 
       ruleSourceGroup.innerHTML = '<option value="">Loading…</option>';
       ruleDestGroup.innerHTML = '<option value="">Loading…</option>';
