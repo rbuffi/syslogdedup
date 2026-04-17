@@ -489,6 +489,29 @@
       return s;
     }
 
+    function formatServicePortsSummary(service) {
+      const entries = Array.isArray(service.service_entries) ? service.service_entries : [];
+      if (entries.length) {
+        const parts = [];
+        for (const entry of entries) {
+          const proto = normalizeL4Protocol(entry.l4_protocol) || 'ANY';
+          const ports = Array.isArray(entry.destination_ports)
+            ? entry.destination_ports.map(p => String(p).trim()).filter(Boolean)
+            : [];
+          const portText = ports.length ? ports.join(',') : 'any';
+          parts.push(proto + ':' + portText);
+        }
+        const uniqueParts = Array.from(new Set(parts));
+        if (uniqueParts.length) return uniqueParts.join('; ');
+      }
+
+      const ports = Array.isArray(service.ports)
+        ? service.ports.map(p => String(p).trim()).filter(Boolean)
+        : [];
+      if (ports.length) return ports.join(',');
+      return 'any';
+    }
+
     function serviceEntryMatchesFlow(entry, portStr, flowProtoNorm) {
       const ports = entry.destination_ports;
       if (!Array.isArray(ports) || !ports.length) return false;
@@ -799,8 +822,10 @@
           }
           ruleService.innerHTML = listToShow
             .map(s => {
-              const label = s.display || s.name || s.id;
-              return '<option value="' + escapeAttr(s.id) + '">' + escapeHtml(label) + '</option>';
+              const baseLabel = s.display || s.name || s.id;
+              const portSummary = formatServicePortsSummary(s);
+              const optionLabel = baseLabel + ' (' + portSummary + ')';
+              return '<option value="' + escapeAttr(s.id) + '">' + escapeHtml(optionLabel) + '</option>';
             })
             .join('');
 
