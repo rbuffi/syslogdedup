@@ -157,6 +157,15 @@
     .modal-form .full-width {
       grid-column: 1 / -1;
     }
+    .inline-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+    .inline-row select {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
     .service-details {
       margin: 0;
       padding: 0.55rem 0.6rem;
@@ -317,7 +326,10 @@
         </label>
         <label>
           Service
-          <select id="ruleService"></select>
+          <div class="inline-row">
+            <select id="ruleService"></select>
+            <button type="button" class="btn btn-ghost" id="ruleRefreshServicesBtn">Ververs services</button>
+          </div>
         </label>
         <label class="full-width">
           Service details
@@ -365,6 +377,7 @@
     const ruleIpProtocol = document.getElementById('ruleIpProtocol');
     const ruleL4Protocol = document.getElementById('ruleL4Protocol');
     const ruleService = document.getElementById('ruleService');
+    const ruleRefreshServicesBtn = document.getElementById('ruleRefreshServicesBtn');
     const ruleServiceDetails = document.getElementById('ruleServiceDetails');
     const ruleComment = document.getElementById('ruleComment');
     const ruleStatus = document.getElementById('ruleStatus');
@@ -574,6 +587,16 @@
       ruleServiceDetails.textContent = formatServiceDetails(selectedService);
     }
 
+    function setRuleStatusError(message) {
+      ruleError.textContent = message;
+      ruleError.style.display = 'block';
+    }
+
+    function clearRuleStatusError() {
+      ruleError.style.display = 'none';
+      ruleError.textContent = '';
+    }
+
     function serviceEntryMatchesFlow(entry, portStr, flowProtoNorm) {
       const ports = entry.destination_ports;
       if (!Array.isArray(ports) || !ports.length) return false;
@@ -726,6 +749,68 @@
       return cachedServices;
     }
 
+    function renderServicesForModal(services, opts) {
+      const options = opts || {};
+      const preserveSelection = !!options.preserveSelection;
+      const preferredServiceId = preserveSelection ? (ruleService.value || '').trim() : '';
+      if (!Array.isArray(services) || !services.length) {
+        ruleService.innerHTML = '<option value="">No services found</option>';
+        ruleServicesForModal = [];
+        ruleServiceDetails.textContent = 'No services found.';
+        return;
+      }
+
+      const portStr = ruleContext && ruleContext.port != null ? String(ruleContext.port).trim() : '';
+      const proto = ruleContext ? (ruleContext.protocol || '').toUpperCase() : '';
+      const usePortFilter = portStr !== '';
+      let listToShow = services;
+      if (usePortFilter) {
+        listToShow = services.filter(s => serviceMatchesFlowPort(s, portStr, proto));
+      }
+      if (usePortFilter && !listToShow.length) {
+        ruleService.innerHTML = '<option value="">none</option>';
+        ruleServicesForModal = [];
+        ruleServiceDetails.textContent = 'No matching services for this flow.';
+        return;
+      }
+
+      ruleServicesForModal = listToShow;
+      ruleService.innerHTML = listToShow
+        .map(s => {
+          const baseLabel = s.display || s.name || s.id;
+          return '<option value="' + escapeAttr(s.id) + '">' + escapeHtml(baseLabel) + '</option>';
+        })
+        .join('');
+
+      const hasPreferred = preferredServiceId && listToShow.some(s => (s.id || '') === preferredServiceId);
+      if (hasPreferred) {
+        ruleService.value = preferredServiceId;
+      } else if (usePortFilter && listToShow.length) {
+        ruleService.value = listToShow[0].id;
+      }
+      updateSelectedServiceDetails();
+    }
+
+    async function refreshServicesForModal(opts) {
+      if (!ruleContext) return;
+      const options = opts || {};
+      const forceRefresh = !!options.forceRefresh;
+      const preserveSelection = !!options.preserveSelection;
+      if (forceRefresh) {
+        cachedServices = null;
+      }
+      clearRuleStatusError();
+      try {
+        const services = await ensureServicesLoaded();
+        renderServicesForModal(services, { preserveSelection });
+      } catch (e) {
+        ruleService.innerHTML = '<option value="">Failed to load services</option>';
+        ruleServicesForModal = [];
+        ruleServiceDetails.textContent = 'Failed to load service details.';
+        setRuleStatusError(e.message);
+      }
+    }
+
     function renderGroupedTable(rows) {
       if (!rows.length) {
         tableWrap.innerHTML = '<p class="hint">No rules match the selected filters.</p>';
@@ -803,8 +888,7 @@
 
     async function openRuleModal() {
       if (!ruleContext) return;
-      ruleError.style.display = 'none';
-      ruleError.textContent = '';
+      clearRuleStatusError();
       ruleStatus.textContent = 'Creating a disabled, logged rule in the Application section.';
       ruleStatus.classList.remove('error');
       ruleStatus.classList.add('ok');
@@ -826,6 +910,7 @@
 
       rulePolicy.innerHTML = '<option value="">Loading…</option>';
       ruleService.innerHTML = '<option value="">Loading…</option>';
+      ruleRefreshServicesBtn.disabled = true;
       modalBackdrop.style.display = 'flex';
 
       // Strict behavior: only allow groups that belong to the clicked rule row.
@@ -861,51 +946,11 @@
         })
         .catch(e => {
           rulePolicy.innerHTML = '<option value="">Failed to load policies</option>';
-          ruleError.textContent = e.message;
-          ruleError.style.display = 'block';
+          setRuleStatusError(e.message);
         });
 
-      ensureServicesLoaded()
-        .then(services => {
-          if (!Array.isArray(services) || !services.length) {
-            ruleService.innerHTML = '<option value="">No services found</option>';
-            ruleServicesForModal = [];
-            ruleServiceDetails.textContent = 'No services found.';
-            return;
-          }
-          const portStr = ruleContext.port != null ? String(ruleContext.port).trim() : '';
-          const proto = (ruleContext.protocol || '').toUpperCase();
-          const usePortFilter = portStr !== '';
-          let listToShow = services;
-          if (usePortFilter) {
-            listToShow = services.filter(s => serviceMatchesFlowPort(s, portStr, proto));
-          }
-          if (usePortFilter && !listToShow.length) {
-            ruleService.innerHTML = '<option value="">none</option>';
-            ruleServicesForModal = [];
-            ruleServiceDetails.textContent = 'No matching services for this flow.';
-            return;
-          }
-          ruleServicesForModal = listToShow;
-          ruleService.innerHTML = listToShow
-            .map(s => {
-              const baseLabel = s.display || s.name || s.id;
-              return '<option value="' + escapeAttr(s.id) + '">' + escapeHtml(baseLabel) + '</option>';
-            })
-            .join('');
-
-          if (usePortFilter && listToShow.length) {
-            ruleService.value = listToShow[0].id;
-          }
-          updateSelectedServiceDetails();
-        })
-        .catch(e => {
-          ruleService.innerHTML = '<option value="">Failed to load services</option>';
-          ruleServicesForModal = [];
-          ruleServiceDetails.textContent = 'Failed to load service details.';
-          ruleError.textContent = e.message;
-          ruleError.style.display = 'block';
-        });
+      await refreshServicesForModal({ preserveSelection: false });
+      ruleRefreshServicesBtn.disabled = false;
     }
 
     function closeRuleModal() {
@@ -922,12 +967,10 @@
       const serviceId = ruleService.value.trim();
       const comment = ruleComment.value.trim();
 
-      ruleError.style.display = 'none';
-      ruleError.textContent = '';
+      clearRuleStatusError();
 
       if (!sourceGroup || !destGroup || !policyId || !direction || !serviceId) {
-        ruleError.textContent = 'Source group, destination group, policy, direction, and service are required.';
-        ruleError.style.display = 'block';
+        setRuleStatusError('Source group, destination group, policy, direction, and service are required.');
         return;
       }
 
@@ -972,8 +1015,7 @@
         }, 900);
       } catch (e) {
         ruleStatus.textContent = '';
-        ruleError.textContent = 'Failed to create rule: ' + e.message;
-        ruleError.style.display = 'block';
+        setRuleStatusError('Failed to create rule: ' + e.message);
       } finally {
         ruleSubmitBtn.disabled = false;
       }
@@ -994,6 +1036,27 @@
     ruleCancelBtn.addEventListener('click', closeRuleModal);
     ruleSubmitBtn.addEventListener('click', submitRule);
     ruleService.addEventListener('change', updateSelectedServiceDetails);
+    ruleRefreshServicesBtn.addEventListener('click', async () => {
+      if (!ruleContext) return;
+      const previousStatusText = ruleStatus.textContent;
+      const previousStatusIsOk = ruleStatus.classList.contains('ok');
+      const previousStatusIsError = ruleStatus.classList.contains('error');
+      ruleRefreshServicesBtn.disabled = true;
+      ruleStatus.textContent = 'Refreshing services…';
+      ruleStatus.classList.remove('error');
+      ruleStatus.classList.add('ok');
+      await refreshServicesForModal({ forceRefresh: true, preserveSelection: true });
+      if (ruleError.style.display !== 'block') {
+        ruleStatus.textContent = 'Services refreshed.';
+      } else if (previousStatusText) {
+        ruleStatus.textContent = previousStatusText;
+        ruleStatus.classList.toggle('ok', previousStatusIsOk);
+        ruleStatus.classList.toggle('error', previousStatusIsError);
+      } else {
+        ruleStatus.textContent = '';
+      }
+      ruleRefreshServicesBtn.disabled = false;
+    });
     modalBackdrop.addEventListener('click', (e) => {
       if (e.target === modalBackdrop) {
         closeRuleModal();
