@@ -14,6 +14,22 @@ NO_GROUP_VALUE = "nogroup"
 
 
 class PostgresClient:
+    @staticmethod
+    def _normalize_protocols(protocols: Optional[List[str]]) -> List[str]:
+        out: List[str] = []
+        seen = set()
+        for p in (protocols or []):
+            v = str(p or "").strip().upper()
+            if not v or v in seen:
+                continue
+            seen.add(v)
+            out.append(v)
+        return out
+
+    @staticmethod
+    def _normalize_result(result: Optional[str]) -> str:
+        return str(result or "").strip().lower()
+
     """Simple PostgreSQL client that writes per-flow rows suitable for Grafana."""
 
     def __init__(self, config: PostgresConfig):
@@ -317,7 +333,8 @@ class PostgresClient:
         src_ip: Optional[str] = None,
         dest_ip: Optional[str] = None,
         dest_port: Optional[str] = None,
-        protocol: Optional[str] = None,
+        protocols: Optional[List[str]] = None,
+        result: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return flat list of rules with optional filter by source_group, dest_group."""
         if not self._ensure_conn():
@@ -329,7 +346,8 @@ class PostgresClient:
         src_ip = (src_ip or "").strip()
         dest_ip = (dest_ip or "").strip()
         dest_port = (dest_port or "").strip()
-        protocol = (protocol or "").strip().upper()
+        protocols_norm = self._normalize_protocols(protocols)
+        result_norm = self._normalize_result(result)
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -361,7 +379,8 @@ class PostgresClient:
                       AND (%s = '' OR src_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR dest_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR CAST(dest_port AS TEXT) = %s)
-                      AND (%s = '' OR UPPER(COALESCE(protocol, '')) = %s)
+                      AND (%s::TEXT[] IS NULL OR UPPER(COALESCE(protocol, '')) = ANY(%s::TEXT[]))
+                      AND (%s = '' OR LOWER(COALESCE(result, '')) = %s)
                     ORDER BY hit_count DESC, dest_port
                     LIMIT 500
                     """,
@@ -384,8 +403,10 @@ class PostgresClient:
                         dest_ip,
                         dest_port,
                         dest_port,
-                        protocol,
-                        protocol,
+                        protocols_norm if protocols_norm else None,
+                        protocols_norm if protocols_norm else None,
+                        result_norm,
+                        result_norm,
                     ),
                 )
                 rows = cur.fetchall()
@@ -402,7 +423,8 @@ class PostgresClient:
         src_ip: Optional[str] = None,
         dest_ip: Optional[str] = None,
         dest_port: Optional[str] = None,
-        protocol: Optional[str] = None,
+        protocols: Optional[List[str]] = None,
+        result: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return rules grouped by (source_group, dest_group) with aggregated dest_ports."""
         if not self._ensure_conn():
@@ -414,7 +436,8 @@ class PostgresClient:
         src_ip = (src_ip or "").strip()
         dest_ip = (dest_ip or "").strip()
         dest_port = (dest_port or "").strip()
-        protocol = (protocol or "").strip().upper()
+        protocols_norm = self._normalize_protocols(protocols)
+        result_norm = self._normalize_result(result)
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -434,7 +457,8 @@ class PostgresClient:
                       AND (%s = '' OR src_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR dest_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR CAST(dest_port AS TEXT) = %s)
-                      AND (%s = '' OR UPPER(COALESCE(protocol, '')) = %s)
+                      AND (%s::TEXT[] IS NULL OR UPPER(COALESCE(protocol, '')) = ANY(%s::TEXT[]))
+                      AND (%s = '' OR LOWER(COALESCE(result, '')) = %s)
                     GROUP BY src_group, dest_group, direction, result
                     ORDER BY hit_count DESC, source_group, dest_group
                     LIMIT 200
@@ -456,8 +480,10 @@ class PostgresClient:
                         dest_ip,
                         dest_port,
                         dest_port,
-                        protocol,
-                        protocol,
+                        protocols_norm if protocols_norm else None,
+                        protocols_norm if protocols_norm else None,
+                        result_norm,
+                        result_norm,
                     ),
                 )
                 rows = cur.fetchall()

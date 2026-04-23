@@ -2,7 +2,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -28,6 +28,14 @@ except Exception:
     nsxt = None
 
 static_dir = Path(__file__).resolve().parent / "static"
+
+
+def parse_protocols_csv(raw: str) -> List[str]:
+    return [p.strip().upper() for p in (raw or "").split(",") if p.strip()]
+
+
+def parse_result(raw: str) -> str:
+    return (raw or "").strip().lower()
 
 
 def create_inner_app() -> FastAPI:
@@ -81,7 +89,8 @@ def create_inner_app() -> FastAPI:
         src_ip: str = Query("", description="Filter by source IP (substring match)"),
         dest_ip: str = Query("", description="Filter by dest IP (substring match)"),
         dest_port: str = Query("", description="Filter by destination port (text)"),
-        protocol: str = Query("", description="Filter by protocol (e.g. TCP/UDP/FIN/RST)"),
+        protocols: str = Query("", description="Comma-separated protocol filter (e.g. TCP,UDP,FIN,RST)"),
+        result: str = Query("", description="Filter by result (pass/drop)"),
     ):
         """Flat list of rules; optional filter by source_group, dest_group."""
         return pg.get_rules(
@@ -91,7 +100,8 @@ def create_inner_app() -> FastAPI:
             src_ip=src_ip or None,
             dest_ip=dest_ip or None,
             dest_port=dest_port or None,
-            protocol=protocol or None,
+            protocols=parse_protocols_csv(protocols),
+            result=parse_result(result),
         )
 
     @inner.get("/api/rules/grouped")
@@ -102,7 +112,8 @@ def create_inner_app() -> FastAPI:
         src_ip: str = Query("", description="Filter by source IP (substring match)"),
         dest_ip: str = Query("", description="Filter by dest IP (substring match)"),
         dest_port: str = Query("", description="Filter by destination port (text)"),
-        protocol: str = Query("", description="Filter by protocol (e.g. TCP/UDP/FIN/RST)"),
+        protocols: str = Query("", description="Comma-separated protocol filter (e.g. TCP,UDP,FIN,RST)"),
+        result: str = Query("", description="Filter by result (pass/drop)"),
     ):
         """Rules grouped by (source_group, dest_group) with aggregated dest_ports."""
         return pg.get_rules_grouped(
@@ -112,7 +123,8 @@ def create_inner_app() -> FastAPI:
             src_ip=src_ip or None,
             dest_ip=dest_ip or None,
             dest_port=dest_port or None,
-            protocol=protocol or None,
+            protocols=parse_protocols_csv(protocols),
+            result=parse_result(result),
         )
 
     @inner.get("/api/protocols")

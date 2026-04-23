@@ -272,8 +272,15 @@
     </label>
     <label>
       Protocol
-      <select id="protocolFilter">
+      <select id="protocolFilter" multiple size="4">
+      </select>
+    </label>
+    <label>
+      Result
+      <select id="resultFilter">
         <option value="">All</option>
+        <option value="pass" selected>pass</option>
+        <option value="drop">drop</option>
       </select>
     </label>
     <label>
@@ -371,6 +378,7 @@
     const destIpFilter = document.getElementById('destIpFilter');
     const portFilter = document.getElementById('portFilter');
     const protocolFilter = document.getElementById('protocolFilter');
+    const resultFilter = document.getElementById('resultFilter');
     const loadingEl = document.getElementById('loading');
     const errorEl = document.getElementById('error');
     const tableWrap = document.getElementById('tableWrap');
@@ -482,31 +490,110 @@
 
     async function loadProtocols() {
       if (!requireAuthForData()) {
-        protocolFilter.innerHTML = '<option value="">All</option>';
+        protocolFilter.innerHTML = '';
         return;
       }
       try {
-        const currentProtocol = protocolFilter.value;
+        const currentProtocols = new Set(Array.from(protocolFilter.selectedOptions).map(o => o.value));
         const r = await fetch(appUrl('/api/protocols'));
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         const protocols = Array.isArray(data.protocols) ? data.protocols : [];
-        protocolFilter.innerHTML = '<option value="">All</option>' + protocols
+        protocolFilter.innerHTML = protocols
           .map(p => `<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`)
           .join('');
-        if (currentProtocol && protocols.includes(currentProtocol)) {
-          protocolFilter.value = currentProtocol;
-        }
+
+        // Default selection: TCP + UDP (when present), unless user already selected values.
+        const hasExisting = currentProtocols.size > 0;
+        const defaultSelected = new Set(['TCP', 'UDP']);
+        Array.from(protocolFilter.options).forEach(opt => {
+          if (hasExisting) {
+            opt.selected = currentProtocols.has(opt.value);
+          } else {
+            opt.selected = defaultSelected.has(opt.value);
+          }
+        });
       } catch (e) {
         showError('Failed to load protocols: ' + e.message);
       }
     }
 
-    function escapeAttr(s) {
-      return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    function getSelectedProtocols() {
+      return Array.from(protocolFilter.selectedOptions)
+        .map(o => (o.value || '').trim().toUpperCase())
+        .filter(Boolean);
     }
-    function escapeHtml(s) {
-      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+    function hasAnyProtocolSelected() {
+      return getSelectedProtocols().length > 0;
+    }
+
+    function buildProtocolsParam() {
+      const selected = getSelectedProtocols();
+      return selected.join(',');
+    }
+
+    function getSelectedResult() {
+      return (resultFilter.value || '').trim().toLowerCase();
+    }
+
+    function ensureDefaultProtocolSelectionIfEmpty() {
+      if (hasAnyProtocolSelected()) return;
+      const defaults = new Set(['TCP', 'UDP']);
+      Array.from(protocolFilter.options).forEach(opt => {
+        opt.selected = defaults.has(opt.value);
+      });
+    }
+
+    function onProtocolFilterChange() {
+      // Keep at least TCP+UDP selected by default behavior if user clears all.
+      ensureDefaultProtocolSelectionIfEmpty();
+      loadRules();
+    }
+
+    async function loadRules() {
+      if (!requireAuthForData()) {
+        tableWrap.innerHTML = '<p class="hint">Log in om firewallgegevens te bekijken.</p>';
+        detailsWrap.innerHTML = '';
+        return;
+      }
+      const sourceGroup = sourceSelect.value.trim();
+      const destGroup = destSelect.value.trim();
+      const hours = parseInt(hoursSelect.value || '0', 10) || 0;
+      const srcIp = srcIpFilter.value.trim();
+      const destIp = destIpFilter.value.trim();
+      const port = portFilter.value.trim();
+      const protocolsParam = buildProtocolsParam();
+      const result = getSelectedResult();
+      // Require at least some filter to avoid huge unbounded queries
+      if (!sourceGroup && !destGroup && hours === 0 && !srcIp && !destIp && !port && !protocolsParam && !result) {
+        tableWrap.innerHTML = '<p class="hint">Select a group, IP, port, or time window, then adjust filters to load data.</p>';
+        detailsWrap.innerHTML = '';
+        return;
+      }
+      showLoading(true);
+      clearError();
+      detailsWrap.innerHTML = '';
+      try {
+        const params = new URLSearchParams();
+        if (sourceGroup) params.set('source_group', sourceGroup);
+        if (destGroup) params.set('dest_group', destGroup);
+        if (hours > 0) params.set('hours', String(hours));
+        if (srcIp) params.set('src_ip', srcIp);
+        if (destIp) params.set('dest_ip', destIp);
+        if (port) params.set('dest_port', port);
+        if (protocolsParam) params.set('protocols', protocolsParam);
+        if (result) params.set('result', result);
+        const r = await fetch(appUrl('/api/rules/grouped') + '?' + params.toString());
+        if (!r.ok) throw new Error(r.statusText);
+        const rows = await r.json();
+        renderGroupedTable(rows);
+        }
+      catch (e) {
+        showError('Failed to load rules: ' + e.message);
+      } finally {
+        showLoading(false);
+      }
     }
     function parseJsonArray(raw) {
       try {
@@ -650,46 +737,11 @@
       return svcProto === flowProtoNorm;
     }
 
-    async function loadRules() {
-      if (!requireAuthForData()) {
-        tableWrap.innerHTML = '<p class="hint">Log in om firewallgegevens te bekijken.</p>';
-        detailsWrap.innerHTML = '';
-        return;
-      }
-      const sourceGroup = sourceSelect.value.trim();
-      const destGroup = destSelect.value.trim();
-      const hours = parseInt(hoursSelect.value || '0', 10) || 0;
-      const srcIp = srcIpFilter.value.trim();
-      const destIp = destIpFilter.value.trim();
-      const port = portFilter.value.trim();
-      const protocol = protocolFilter.value.trim().toUpperCase();
-      // Require at least some filter to avoid huge unbounded queries
-      if (!sourceGroup && !destGroup && hours === 0 && !srcIp && !destIp && !port && !protocol) {
-        tableWrap.innerHTML = '<p class="hint">Select a group, IP, port, or time window, then adjust filters to load data.</p>';
-        detailsWrap.innerHTML = '';
-        return;
-      }
-      showLoading(true);
-      clearError();
-      detailsWrap.innerHTML = '';
-      try {
-        const params = new URLSearchParams();
-        if (sourceGroup) params.set('source_group', sourceGroup);
-        if (destGroup) params.set('dest_group', destGroup);
-        if (hours > 0) params.set('hours', String(hours));
-        if (srcIp) params.set('src_ip', srcIp);
-        if (destIp) params.set('dest_ip', destIp);
-        if (port) params.set('dest_port', port);
-        if (protocol) params.set('protocol', protocol);
-        const r = await fetch(appUrl('/api/rules/grouped') + '?' + params.toString());
-        if (!r.ok) throw new Error(r.statusText);
-        const rows = await r.json();
-        renderGroupedTable(rows);
-      } catch (e) {
-        showError('Failed to load rules: ' + e.message);
-      } finally {
-        showLoading(false);
-      }
+    function escapeAttr(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    }
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
     function onPortClick(e) {
@@ -895,7 +947,8 @@
       const srcIp = srcIpFilter.value.trim();
       const destIp = destIpFilter.value.trim();
       const port = portFilter.value.trim();
-      const protocol = protocolFilter.value.trim().toUpperCase();
+      const protocolsParam = buildProtocolsParam();
+      const result = getSelectedResult();
       showLoading(true);
       clearError();
       try {
@@ -906,7 +959,8 @@
         if (srcIp) params.set('src_ip', srcIp);
         if (destIp) params.set('dest_ip', destIp);
         if (port) params.set('dest_port', port);
-        if (protocol) params.set('protocol', protocol);
+        if (protocolsParam) params.set('protocols', protocolsParam);
+        if (result) params.set('result', result);
         const r = await fetch(appUrl('/api/rules') + '?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
@@ -1066,7 +1120,8 @@
       await loadRules();
     });
     portFilter.addEventListener('change', loadRules);
-    protocolFilter.addEventListener('change', loadRules);
+    protocolFilter.addEventListener('change', onProtocolFilterChange);
+    resultFilter.addEventListener('change', loadRules);
     ruleCancelBtn.addEventListener('click', closeRuleModal);
     ruleSubmitBtn.addEventListener('click', submitRule);
     ruleService.addEventListener('change', updateSelectedServiceDetails);
