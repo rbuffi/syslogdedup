@@ -53,6 +53,64 @@
       min-width: 160px;
     }
     .filters select:focus { outline: none; border-color: var(--accent); }
+    .protocol-dropdown {
+      position: relative;
+      min-width: 190px;
+    }
+    .protocol-dropdown-btn {
+      width: 100%;
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      min-height: 35px;
+      text-align: left;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+    .protocol-dropdown-btn:focus { outline: none; border-color: var(--accent); }
+    .protocol-dropdown-btn::after {
+      content: '▾';
+      color: var(--muted);
+      font-size: 0.8rem;
+      flex: 0 0 auto;
+    }
+    .protocol-dropdown.open .protocol-dropdown-btn::after {
+      content: '▴';
+    }
+    .protocol-dropdown-panel {
+      position: absolute;
+      top: calc(100% + 0.25rem);
+      left: 0;
+      right: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      z-index: 50;
+      display: none;
+      max-height: 220px;
+      overflow: auto;
+      padding: 0.35rem 0;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+    .protocol-dropdown.open .protocol-dropdown-panel {
+      display: block;
+    }
+    .protocol-option {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      padding: 0.25rem 0.7rem;
+      font-size: 0.9rem;
+      color: var(--text);
+    }
+    .protocol-option:hover {
+      background: rgba(88, 166, 255, 0.08);
+    }
     .loading, .error { margin: 1rem 0; }
     .error { color: #f85149; }
     table {
@@ -161,10 +219,15 @@
       display: flex;
       gap: 0.5rem;
       align-items: center;
+      width: 100%;
     }
     .inline-row select {
       flex: 1 1 auto;
       min-width: 0;
+    }
+    .inline-row .btn {
+      flex: 0 0 auto;
+      white-space: nowrap;
     }
     .service-details {
       margin: 0;
@@ -272,8 +335,10 @@
     </label>
     <label>
       Protocol
-      <select id="protocolFilter" multiple size="4">
-      </select>
+      <div id="protocolDropdown" class="protocol-dropdown">
+        <button type="button" id="protocolDropdownBtn" class="protocol-dropdown-btn">TCP, UDP</button>
+        <div id="protocolOptions" class="protocol-dropdown-panel"></div>
+      </div>
     </label>
     <label>
       Result
@@ -337,7 +402,7 @@
           L4 Protocol
           <input id="ruleL4Protocol" type="text" value="—" readonly />
         </label>
-        <label>
+        <label class="full-width">
           Service
           <div class="inline-row">
             <select id="ruleService"></select>
@@ -377,7 +442,9 @@
     const srcIpFilter = document.getElementById('srcIpFilter');
     const destIpFilter = document.getElementById('destIpFilter');
     const portFilter = document.getElementById('portFilter');
-    const protocolFilter = document.getElementById('protocolFilter');
+    const protocolDropdown = document.getElementById('protocolDropdown');
+    const protocolDropdownBtn = document.getElementById('protocolDropdownBtn');
+    const protocolOptions = document.getElementById('protocolOptions');
     const resultFilter = document.getElementById('resultFilter');
     const loadingEl = document.getElementById('loading');
     const errorEl = document.getElementById('error');
@@ -490,36 +557,44 @@
 
     async function loadProtocols() {
       if (!requireAuthForData()) {
-        protocolFilter.innerHTML = '';
+        protocolOptions.innerHTML = '';
+        updateProtocolDropdownLabel();
         return;
       }
       try {
-        const currentProtocols = new Set(Array.from(protocolFilter.selectedOptions).map(o => o.value));
+        const currentProtocols = new Set(getSelectedProtocols());
         const r = await fetch(appUrl('/api/protocols'));
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         const protocols = Array.isArray(data.protocols) ? data.protocols : [];
-        protocolFilter.innerHTML = protocols
-          .map(p => `<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`)
+        protocolOptions.innerHTML = protocols
+          .map(p =>
+            '<label class="protocol-option">' +
+            '<input type="checkbox" data-protocol="' + escapeAttr(p) + '" value="' + escapeAttr(p) + '">' +
+            '<span>' + escapeHtml(p) + '</span>' +
+            '</label>'
+          )
           .join('');
 
         // Default selection: TCP + UDP (when present), unless user already selected values.
         const hasExisting = currentProtocols.size > 0;
         const defaultSelected = new Set(['TCP', 'UDP']);
-        Array.from(protocolFilter.options).forEach(opt => {
+        protocolOptions.querySelectorAll('input[type="checkbox"][data-protocol]').forEach(input => {
+          const value = String(input.value || '').trim().toUpperCase();
           if (hasExisting) {
-            opt.selected = currentProtocols.has(opt.value);
+            input.checked = currentProtocols.has(value);
           } else {
-            opt.selected = defaultSelected.has(opt.value);
+            input.checked = defaultSelected.has(value);
           }
         });
+        updateProtocolDropdownLabel();
       } catch (e) {
         showError('Failed to load protocols: ' + e.message);
       }
     }
 
     function getSelectedProtocols() {
-      return Array.from(protocolFilter.selectedOptions)
+      return Array.from(protocolOptions.querySelectorAll('input[type="checkbox"][data-protocol]:checked'))
         .map(o => (o.value || '').trim().toUpperCase())
         .filter(Boolean);
     }
@@ -540,14 +615,29 @@
     function ensureDefaultProtocolSelectionIfEmpty() {
       if (hasAnyProtocolSelected()) return;
       const defaults = new Set(['TCP', 'UDP']);
-      Array.from(protocolFilter.options).forEach(opt => {
-        opt.selected = defaults.has(opt.value);
+      protocolOptions.querySelectorAll('input[type="checkbox"][data-protocol]').forEach(input => {
+        const value = String(input.value || '').trim().toUpperCase();
+        input.checked = defaults.has(value);
       });
+    }
+
+    function updateProtocolDropdownLabel() {
+      const selected = getSelectedProtocols();
+      if (!selected.length) {
+        protocolDropdownBtn.textContent = 'Select protocols';
+        return;
+      }
+      protocolDropdownBtn.textContent = selected.length <= 2 ? selected.join(', ') : (selected.length + ' selected');
+    }
+
+    function toggleProtocolDropdown(show) {
+      protocolDropdown.classList.toggle('open', show);
     }
 
     function onProtocolFilterChange() {
       // Keep at least TCP+UDP selected by default behavior if user clears all.
       ensureDefaultProtocolSelectionIfEmpty();
+      updateProtocolDropdownLabel();
       loadRules();
     }
 
@@ -1120,7 +1210,20 @@
       await loadRules();
     });
     portFilter.addEventListener('change', loadRules);
-    protocolFilter.addEventListener('change', onProtocolFilterChange);
+    protocolDropdownBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleProtocolDropdown(!protocolDropdown.classList.contains('open'));
+    });
+    protocolOptions.addEventListener('change', (e) => {
+      if (e.target && e.target.matches('input[type="checkbox"][data-protocol]')) {
+        onProtocolFilterChange();
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (!protocolDropdown.contains(e.target)) {
+        toggleProtocolDropdown(false);
+      }
+    });
     resultFilter.addEventListener('change', loadRules);
     ruleCancelBtn.addEventListener('click', closeRuleModal);
     ruleSubmitBtn.addEventListener('click', submitRule);
