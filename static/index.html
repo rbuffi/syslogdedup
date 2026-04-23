@@ -271,6 +271,12 @@
       <input id="portFilter" type="text" placeholder="e.g. 443" />
     </label>
     <label>
+      Protocol
+      <select id="protocolFilter">
+        <option value="">All</option>
+      </select>
+    </label>
+    <label>
       From
       <select id="hoursSelect">
         <option value="0" selected>All time</option>
@@ -364,6 +370,7 @@
     const srcIpFilter = document.getElementById('srcIpFilter');
     const destIpFilter = document.getElementById('destIpFilter');
     const portFilter = document.getElementById('portFilter');
+    const protocolFilter = document.getElementById('protocolFilter');
     const loadingEl = document.getElementById('loading');
     const errorEl = document.getElementById('error');
     const tableWrap = document.getElementById('tableWrap');
@@ -470,6 +477,28 @@
         }
       } catch (e) {
         showError('Failed to load groups: ' + e.message);
+      }
+    }
+
+    async function loadProtocols() {
+      if (!requireAuthForData()) {
+        protocolFilter.innerHTML = '<option value="">All</option>';
+        return;
+      }
+      try {
+        const currentProtocol = protocolFilter.value;
+        const r = await fetch(appUrl('/api/protocols'));
+        if (!r.ok) throw new Error(r.statusText);
+        const data = await r.json();
+        const protocols = Array.isArray(data.protocols) ? data.protocols : [];
+        protocolFilter.innerHTML = '<option value="">All</option>' + protocols
+          .map(p => `<option value="${escapeAttr(p)}">${escapeHtml(p)}</option>`)
+          .join('');
+        if (currentProtocol && protocols.includes(currentProtocol)) {
+          protocolFilter.value = currentProtocol;
+        }
+      } catch (e) {
+        showError('Failed to load protocols: ' + e.message);
       }
     }
 
@@ -633,8 +662,9 @@
       const srcIp = srcIpFilter.value.trim();
       const destIp = destIpFilter.value.trim();
       const port = portFilter.value.trim();
+      const protocol = protocolFilter.value.trim().toUpperCase();
       // Require at least some filter to avoid huge unbounded queries
-      if (!sourceGroup && !destGroup && hours === 0 && !srcIp && !destIp && !port) {
+      if (!sourceGroup && !destGroup && hours === 0 && !srcIp && !destIp && !port && !protocol) {
         tableWrap.innerHTML = '<p class="hint">Select a group, IP, port, or time window, then adjust filters to load data.</p>';
         detailsWrap.innerHTML = '';
         return;
@@ -650,6 +680,7 @@
         if (srcIp) params.set('src_ip', srcIp);
         if (destIp) params.set('dest_ip', destIp);
         if (port) params.set('dest_port', port);
+        if (protocol) params.set('protocol', protocol);
         const r = await fetch(appUrl('/api/rules/grouped') + '?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
@@ -864,6 +895,7 @@
       const srcIp = srcIpFilter.value.trim();
       const destIp = destIpFilter.value.trim();
       const port = portFilter.value.trim();
+      const protocol = protocolFilter.value.trim().toUpperCase();
       showLoading(true);
       clearError();
       try {
@@ -874,6 +906,7 @@
         if (srcIp) params.set('src_ip', srcIp);
         if (destIp) params.set('dest_ip', destIp);
         if (port) params.set('dest_port', port);
+        if (protocol) params.set('protocol', protocol);
         const r = await fetch(appUrl('/api/rules') + '?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
@@ -1033,6 +1066,7 @@
       await loadRules();
     });
     portFilter.addEventListener('change', loadRules);
+    protocolFilter.addEventListener('change', loadRules);
     ruleCancelBtn.addEventListener('click', closeRuleModal);
     ruleSubmitBtn.addEventListener('click', submitRule);
     ruleService.addEventListener('change', updateSelectedServiceDetails);
@@ -1093,6 +1127,7 @@
     (async function boot() {
       await initAuthUi();
       await loadGroups();
+      await loadProtocols();
     })();
   </script>
 </body>

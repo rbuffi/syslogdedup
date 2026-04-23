@@ -81,6 +81,7 @@ def create_inner_app() -> FastAPI:
         src_ip: str = Query("", description="Filter by source IP (substring match)"),
         dest_ip: str = Query("", description="Filter by dest IP (substring match)"),
         dest_port: str = Query("", description="Filter by destination port (text)"),
+        protocol: str = Query("", description="Filter by protocol (e.g. TCP/UDP/FIN/RST)"),
     ):
         """Flat list of rules; optional filter by source_group, dest_group."""
         return pg.get_rules(
@@ -90,6 +91,7 @@ def create_inner_app() -> FastAPI:
             src_ip=src_ip or None,
             dest_ip=dest_ip or None,
             dest_port=dest_port or None,
+            protocol=protocol or None,
         )
 
     @inner.get("/api/rules/grouped")
@@ -100,6 +102,7 @@ def create_inner_app() -> FastAPI:
         src_ip: str = Query("", description="Filter by source IP (substring match)"),
         dest_ip: str = Query("", description="Filter by dest IP (substring match)"),
         dest_port: str = Query("", description="Filter by destination port (text)"),
+        protocol: str = Query("", description="Filter by protocol (e.g. TCP/UDP/FIN/RST)"),
     ):
         """Rules grouped by (source_group, dest_group) with aggregated dest_ports."""
         return pg.get_rules_grouped(
@@ -109,7 +112,13 @@ def create_inner_app() -> FastAPI:
             src_ip=src_ip or None,
             dest_ip=dest_ip or None,
             dest_port=dest_port or None,
+            protocol=protocol or None,
         )
+
+    @inner.get("/api/protocols")
+    def api_protocols():
+        """Distinct protocol values for the web UI dropdown."""
+        return {"protocols": pg.get_protocols()}
 
     class CreateRuleRequest(BaseModel):
         source_group: str

@@ -288,6 +288,27 @@ class PostgresClient:
             logger.debug(f"Failed to get groups from PostgreSQL: {e}")
         return out
 
+    def get_protocols(self) -> List[str]:
+        """Return distinct non-empty protocols for the protocol filter dropdown."""
+        if not self._ensure_conn():
+            return []
+        t = self.config.table
+        try:
+            with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute(
+                    f"""
+                    SELECT DISTINCT UPPER(TRIM(protocol)) AS protocol
+                    FROM {t}
+                    WHERE protocol IS NOT NULL
+                      AND TRIM(protocol) != ''
+                    ORDER BY 1
+                    """
+                )
+                return [r["protocol"] for r in cur.fetchall() if r.get("protocol")]
+        except Exception as e:
+            logger.debug(f"Failed to get protocols from PostgreSQL: {e}")
+            return []
+
     def get_rules(
         self,
         source_group: Optional[str] = None,
@@ -296,6 +317,7 @@ class PostgresClient:
         src_ip: Optional[str] = None,
         dest_ip: Optional[str] = None,
         dest_port: Optional[str] = None,
+        protocol: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return flat list of rules with optional filter by source_group, dest_group."""
         if not self._ensure_conn():
@@ -307,6 +329,7 @@ class PostgresClient:
         src_ip = (src_ip or "").strip()
         dest_ip = (dest_ip or "").strip()
         dest_port = (dest_port or "").strip()
+        protocol = (protocol or "").strip().upper()
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -338,6 +361,7 @@ class PostgresClient:
                       AND (%s = '' OR src_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR dest_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR CAST(dest_port AS TEXT) = %s)
+                      AND (%s = '' OR UPPER(COALESCE(protocol, '')) = %s)
                     ORDER BY hit_count DESC, dest_port
                     LIMIT 500
                     """,
@@ -360,6 +384,8 @@ class PostgresClient:
                         dest_ip,
                         dest_port,
                         dest_port,
+                        protocol,
+                        protocol,
                     ),
                 )
                 rows = cur.fetchall()
@@ -376,6 +402,7 @@ class PostgresClient:
         src_ip: Optional[str] = None,
         dest_ip: Optional[str] = None,
         dest_port: Optional[str] = None,
+        protocol: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Return rules grouped by (source_group, dest_group) with aggregated dest_ports."""
         if not self._ensure_conn():
@@ -387,6 +414,7 @@ class PostgresClient:
         src_ip = (src_ip or "").strip()
         dest_ip = (dest_ip or "").strip()
         dest_port = (dest_port or "").strip()
+        protocol = (protocol or "").strip().upper()
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -406,6 +434,7 @@ class PostgresClient:
                       AND (%s = '' OR src_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR dest_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR CAST(dest_port AS TEXT) = %s)
+                      AND (%s = '' OR UPPER(COALESCE(protocol, '')) = %s)
                     GROUP BY src_group, dest_group, direction, result
                     ORDER BY hit_count DESC, source_group, dest_group
                     LIMIT 200
@@ -427,6 +456,8 @@ class PostgresClient:
                         dest_ip,
                         dest_port,
                         dest_port,
+                        protocol,
+                        protocol,
                     ),
                 )
                 rows = cur.fetchall()
