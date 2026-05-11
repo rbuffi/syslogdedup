@@ -203,7 +203,7 @@ def create_inner_app() -> FastAPI:
         dest_ip: str = Query("", description="Exact destination IP to resolve NSX groups for"),
         refresh: bool = Query(
             False,
-            description="If true, re-resolve IPs; full NSX catalog fetch only if not yet loaded",
+            description="If true, reload group metadata from NSX (paginated list only) and re-resolve IPs",
         ),
     ):
         """Resolve source/destination IP group memberships directly from NSX-T."""
