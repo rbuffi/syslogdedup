@@ -14,6 +14,9 @@ nsxt:
   password: "your-password-here"  # NSX-T Manager password
   verify_ssl: true  # Verify SSL certificates (set to false for self-signed certs)
   cache_ttl: 3600  # Cache group lookups for 1 hour (in seconds)
+  # Optional: UI "refresh groups" list filter (NSX member_types). Omit = try IPAddress,NestedGroup then fall back if NSX returns 400.
+  # group_list_member_types: "off"   # never filter (list all groups)
+  # ip_group_lookup_parallelism: 6  # parallel workers for IP-in-group scan (1 = sequential)
 
 influx:
   enabled: false  # Set to true to enable InfluxDB writing

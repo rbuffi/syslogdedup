@@ -7,6 +7,9 @@ metadata:
   annotations:
     # Example for ingress-nginx:
     # nginx.ingress.kubernetes.io/proxy-body-size: "8m"
+    # Long-running NSX group refresh can exceed default ~60s proxy_read_timeout:
+    # nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    # nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
 spec:
   ingressClassName: nginx
   rules:

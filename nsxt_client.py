@@ -1,7 +1,9 @@
 """NSX-T Manager API client for IP-to-group lookups."""
 import logging
 import re
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Dict, List, Any, Tuple
 
 import requests
@@ -44,7 +46,29 @@ class NSXTClient:
         # Map for fast group lookup by path/id (for nested group resolution)
         self._groups_by_path: Dict[str, Dict[str, Any]] = {}
         self._groups_by_id: Dict[str, Dict[str, Any]] = {}
-    
+        self._catalog_lock = threading.Lock()
+
+    def _nsx_get(
+        self,
+        url: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        timeout: float = 30,
+    ):
+        """
+        HTTP GET to NSX. Worker threads use a fresh request (not shared Session)
+        because requests.Session is not guaranteed thread-safe.
+        """
+        if threading.current_thread() is threading.main_thread():
+            return self.session.get(url, params=params, timeout=timeout)
+        return requests.get(
+            url,
+            params=params,
+            auth=self.auth,
+            verify=self.config.verify_ssl,
+            timeout=timeout,
+        )
+
     def _get_cache_key(self, ip: str) -> str:
         """Generate cache key for IP address."""
         return ip
@@ -105,7 +129,7 @@ class NSXTClient:
                 if cursor:
                     params["cursor"] = cursor
                 
-                response = self.session.get(groups_url, params=params, timeout=15)
+                response = self._nsx_get(groups_url, params=params, timeout=15)
                 response.raise_for_status()
                 groups_data = response.json()
                 
@@ -124,7 +148,7 @@ class NSXTClient:
                         f"{self.base_url}/policy/api/v1/infra/domains/default/groups/{group_id}"
                     )
                     try:
-                        detail_resp = self.session.get(detail_url, timeout=15)
+                        detail_resp = self._nsx_get(detail_url, timeout=15)
                         detail_resp.raise_for_status()
                         detail = detail_resp.json()
                         detail["path"] = group_path  # ensure path is present
@@ -147,7 +171,7 @@ class NSXTClient:
                             if members_cursor:
                                 members_params["cursor"] = members_cursor
                             
-                            members_resp = self.session.get(members_url, params=members_params, timeout=15)
+                            members_resp = self._nsx_get(members_url, params=members_params, timeout=15)
                             members_resp.raise_for_status()
                             members_data = members_resp.json()
                             
@@ -232,7 +256,7 @@ class NSXTClient:
             if member_types:
                 params["member_types"] = member_types
 
-            response = self.session.get(groups_url, params=params, timeout=60)
+            response = self._nsx_get(groups_url, params=params, timeout=60)
             response.raise_for_status()
             groups_data = response.json()
 
@@ -260,8 +284,39 @@ class NSXTClient:
         """
         now = time.time()
         groups: List[Dict[str, Any]] = []
+        cfg_filter = self.config.group_list_member_types
+
+        def _load_unfiltered() -> List[Dict[str, Any]]:
+            return self._list_groups_paginated(member_types=None)
+
         try:
-            groups = self._list_groups_paginated()
+            if cfg_filter == "off":
+                groups = _load_unfiltered()
+            elif cfg_filter:
+                try:
+                    groups = self._list_groups_paginated(member_types=cfg_filter)
+                except requests.exceptions.HTTPError as e:
+                    if e.response is not None and e.response.status_code == 400:
+                        logger.info(
+                            "NSX group list rejected member_types=%r (400), retrying without filter",
+                            cfg_filter,
+                        )
+                        groups = _load_unfiltered()
+                    else:
+                        raise
+            else:
+                default_filter = "IPAddress,NestedGroup"
+                try:
+                    groups = self._list_groups_paginated(member_types=default_filter)
+                except requests.exceptions.HTTPError as e:
+                    if e.response is not None and e.response.status_code == 400:
+                        logger.info(
+                            "NSX group list rejected default member_types=%r (400), listing all groups",
+                            default_filter,
+                        )
+                        groups = _load_unfiltered()
+                    else:
+                        raise
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to list NSX groups from NSX-T: {e}")
             return
@@ -287,7 +342,7 @@ class NSXTClient:
             if members_cursor:
                 members_params["cursor"] = members_cursor
 
-            members_resp = self.session.get(members_url, params=members_params, timeout=30)
+            members_resp = self._nsx_get(members_url, params=members_params, timeout=30)
             members_resp.raise_for_status()
             members_data = members_resp.json()
 
@@ -304,6 +359,81 @@ class NSXTClient:
             time.sleep(0.02)
 
         return ip_members
+
+    def _group_ip_matches_members_paginated_scan(self, group_id: str, ip: str) -> bool:
+        """
+        True if ip appears in members/ip-addresses for this group.
+        Stops at the first matching page element (does not load the full member list).
+        """
+        members_url = (
+            f"{self.base_url}/policy/api/v1/infra/domains/default/"
+            f"groups/{group_id}/members/ip-addresses"
+        )
+        members_cursor: Optional[str] = None
+        try:
+            while True:
+                members_params: Dict[str, Any] = {"page_size": 1000}
+                if members_cursor:
+                    members_params["cursor"] = members_cursor
+
+                members_resp = self._nsx_get(members_url, params=members_params, timeout=30)
+                members_resp.raise_for_status()
+                members_data = members_resp.json()
+
+                page_members = members_data.get("results", [])
+                if not page_members:
+                    return False
+
+                for elem in page_members:
+                    if self._ip_matches_member_element(ip, elem):
+                        return True
+
+                members_cursor = members_data.get("cursor")
+                if not members_cursor:
+                    return False
+
+                if threading.current_thread() is threading.main_thread():
+                    time.sleep(0.02)
+        except requests.exceptions.RequestException as e:
+            logger.warning("IP members scan failed for group %s: %s", group_id, e)
+            return False
+
+    def _split_catalog_into_chunks(self, seq: List[Dict[str, Any]], n_chunks: int) -> List[List[Dict[str, Any]]]:
+        """Split seq into up to n_chunks non-empty sublists of nearly equal size."""
+        if not seq:
+            return []
+        n_chunks = max(1, min(n_chunks, len(seq)))
+        k, m = divmod(len(seq), n_chunks)
+        chunks: List[List[Dict[str, Any]]] = []
+        start = 0
+        for i in range(n_chunks):
+            end = start + k + (1 if i < m else 0)
+            part = seq[start:end]
+            if part:
+                chunks.append(part)
+            start = end
+        return chunks
+
+    def _match_groups_chunk(self, ip_address: str, chunk: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [g for g in chunk if self._ip_matches_group(ip_address, g)]
+
+    def _collect_groups_matching_ip(self, ip_address: str) -> List[Dict[str, Any]]:
+        """All group dicts in the current catalog that contain ip_address."""
+        all_g = self._groups
+        workers = max(1, int(self.config.ip_group_lookup_parallelism))
+        if workers <= 1 or len(all_g) < 64:
+            return [g for g in all_g if self._ip_matches_group(ip_address, g)]
+
+        chunks = self._split_catalog_into_chunks(all_g, workers)
+        if len(chunks) <= 1:
+            return [g for g in all_g if self._ip_matches_group(ip_address, g)]
+
+        out: List[Dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=len(chunks)) as ex:
+            futures = [ex.submit(self._match_groups_chunk, ip_address, ch) for ch in chunks]
+            for fut in as_completed(futures):
+                out.extend(fut.result())
+        return out
 
     def _ensure_ip_members_loaded(self, group_detail: dict) -> None:
         """Attach ip_members to group_detail if not already present (lazy fetch)."""
@@ -330,7 +460,7 @@ class NSXTClient:
             return None
         detail_url = f"{self.base_url}/policy/api/v1/infra/domains/default/groups/{group_id}"
         try:
-            detail_resp = self.session.get(detail_url, timeout=30)
+            detail_resp = self._nsx_get(detail_url, timeout=30)
             detail_resp.raise_for_status()
             return detail_resp.json()
         except requests.exceptions.RequestException as e:
@@ -343,17 +473,18 @@ class NSXTClient:
         if not gid:
             return detail
 
-        existing = self._groups_by_id.get(gid)
-        if existing is not None:
-            existing.update(detail)
-            return existing
+        with self._catalog_lock:
+            existing = self._groups_by_id.get(gid)
+            if existing is not None:
+                existing.update(detail)
+                return existing
 
-        self._groups.append(detail)
-        path = detail.get("path", "")
-        if path:
-            self._groups_by_path[path] = detail
-        self._groups_by_id[gid] = detail
-        return detail
+            self._groups.append(detail)
+            path = detail.get("path", "")
+            if path:
+                self._groups_by_path[path] = detail
+            self._groups_by_id[gid] = detail
+            return detail
 
     def _resolve_group_path_or_id(self, path_or_id: str) -> Optional[Dict[str, Any]]:
         """Return group detail from cache, else fetch by id and register."""
@@ -429,13 +560,19 @@ class NSXTClient:
         else:
             self._refresh_groups_if_needed(force=False)
 
+        matched_details = self._collect_groups_matching_ip(ip_address)
+
         matching: List[Tuple[str, int]] = []
-        for group_detail in self._groups:
-            if self._ip_matches_group(ip_address, group_detail):
-                name = self._extract_group_name(group_detail)
-                if name:
-                    member_count = int(group_detail.get("member_count", 999999))
-                    matching.append((name, member_count))
+        for group_detail in matched_details:
+            name = self._extract_group_name(group_detail)
+            if not name:
+                continue
+            group_detail["member_count"] = self._calculate_member_count(group_detail)
+            if int(group_detail["member_count"]) >= 999999:
+                self._ensure_ip_members_loaded(group_detail)
+                group_detail["member_count"] = self._calculate_member_count(group_detail)
+            member_count = int(group_detail["member_count"])
+            matching.append((name, member_count))
 
         if not matching:
             return []
@@ -639,16 +776,30 @@ class NSXTClient:
                 if isinstance(ip_range, str) and self._ip_in_range(ip, ip_range):
                     return True
 
-        # Explicit IP members (from members/ip-addresses API), fetched lazily
-        self._ensure_ip_members_loaded(group_detail)
-        ip_members = group_detail.get("ip_members")
-        if isinstance(ip_members, list) and ip_members:
-            for elem in ip_members:
-                if self._ip_matches_member_element(ip, elem):
-                    return True
+        if self._group_has_only_mac_expression_criteria(group_detail):
+            return False
+
+        gid = group_detail.get("id", "")
+        if gid and self._group_ip_matches_members_paginated_scan(gid, ip):
+            return True
 
         return False
-    
+
+    def _group_has_only_mac_expression_criteria(self, group_detail: dict) -> bool:
+        """If all criteria are MAC-only, skip members/ip-addresses for IPv4 lookups."""
+        expression = group_detail.get("expression")
+        if not expression:
+            return False
+        expressions = expression if isinstance(expression, list) else [expression]
+        if not expressions:
+            return False
+        for expr in expressions:
+            if not isinstance(expr, dict):
+                return False
+            if expr.get("resource_type") != "MACAddressExpression":
+                return False
+        return True
+
     def _expression_has_nested_groups(self, expression: dict) -> bool:
         """Check if an expression contains nested group references."""
         expr_type = expression.get('resource_type', '')
@@ -778,7 +929,7 @@ class NSXTClient:
                 if cursor:
                     params["cursor"] = cursor
 
-                resp = self.session.get(url, params=params, timeout=15)
+                resp = self._nsx_get(url, params=params, timeout=15)
                 resp.raise_for_status()
                 data = resp.json()
                 results = data.get("results", []) or []
@@ -828,7 +979,7 @@ class NSXTClient:
                 if cursor:
                     params["cursor"] = cursor
 
-                resp = self.session.get(url, params=params, timeout=15)
+                resp = self._nsx_get(url, params=params, timeout=15)
                 resp.raise_for_status()
                 data = resp.json()
                 results = data.get("results", []) or []

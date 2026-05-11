@@ -40,6 +40,11 @@ class NSXTConfig:
     verify_ssl: bool = True
     cache_ttl: int = 3600  # Cache TTL in seconds
     # Optional: explicit Application section/domain identifiers can be added here later
+    # None = when listing groups for UI refresh, try member_types=IPAddress,NestedGroup then fall back on HTTP 400.
+    # "off" = never pass member_types (list all groups). Any other string = that member_types filter (with same 400 fallback).
+    group_list_member_types: Optional[str] = None
+    # Parallel workers for IP-in-group scans (1 = sequential). Uses per-thread HTTP for NSX GETs.
+    ip_group_lookup_parallelism: int = 6
 
 
 @dataclass
@@ -137,12 +142,36 @@ def load_config(config_path: Optional[str] = None) -> Config:
         ).lower() == 'true',
     )
     
+    nsxt_cfg = config_data.get('nsxt', {}) or {}
+    _gmt_raw = os.getenv('NSXT_GROUP_LIST_MEMBER_TYPES')
+    if _gmt_raw is not None:
+        if _gmt_raw.strip().lower() in ('', 'off', 'false', 'none'):
+            _gmt: Optional[str] = 'off'
+        else:
+            _gmt = _gmt_raw.strip()
+    else:
+        _gm_yaml = nsxt_cfg.get('group_list_member_types', None)
+        if _gm_yaml is False or (isinstance(_gm_yaml, str) and _gm_yaml.strip().lower() in ('off', 'false', 'none')):
+            _gmt = 'off'
+        elif _gm_yaml is None:
+            _gmt = None
+        else:
+            _gmt = str(_gm_yaml).strip() or None
+
+    _par_env = os.getenv('NSXT_IP_GROUP_LOOKUP_PARALLELISM')
+    if _par_env is not None and _par_env.strip() != '':
+        _parallel = int(_par_env)
+    else:
+        _parallel = int(nsxt_cfg.get('ip_group_lookup_parallelism', 6))
+
     nsxt_config = NSXTConfig(
-        host=os.getenv('NSXT_HOST', config_data.get('nsxt', {}).get('host', '')),
-        username=os.getenv('NSXT_USERNAME', config_data.get('nsxt', {}).get('username', '')),
-        password=os.getenv('NSXT_PASSWORD', config_data.get('nsxt', {}).get('password', '')),
-        verify_ssl=os.getenv('NSXT_VERIFY_SSL', str(config_data.get('nsxt', {}).get('verify_ssl', True))).lower() == 'true',
-        cache_ttl=int(os.getenv('NSXT_CACHE_TTL', config_data.get('nsxt', {}).get('cache_ttl', 3600)))
+        host=os.getenv('NSXT_HOST', nsxt_cfg.get('host', '')),
+        username=os.getenv('NSXT_USERNAME', nsxt_cfg.get('username', '')),
+        password=os.getenv('NSXT_PASSWORD', nsxt_cfg.get('password', '')),
+        verify_ssl=os.getenv('NSXT_VERIFY_SSL', str(nsxt_cfg.get('verify_ssl', True))).lower() == 'true',
+        cache_ttl=int(os.getenv('NSXT_CACHE_TTL', nsxt_cfg.get('cache_ttl', 3600))),
+        group_list_member_types=_gmt,
+        ip_group_lookup_parallelism=max(1, _parallel),
     )
 
     influx_cfg = config_data.get('influx', {})
