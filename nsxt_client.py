@@ -71,25 +71,26 @@ class NSXTClient:
 
     # -------- Batch / precomputed group loading --------
 
-    def _refresh_groups_if_needed(self):
+    def _refresh_groups_if_needed(self, force: bool = False):
         """
         Refresh the in-memory list of NSX groups if cache_ttl has expired.
 
         This precomputes group membership structures so lookups don't hit
         the NSX API for every single IP.
+
+        Args:
+            force: If True, bypass TTL/min-interval guards and refetch from NSX
+                (explicit UI refresh). ``_last_refresh_attempt`` is only updated
+                after a successful fetch so a failed load can retry immediately.
         """
         now = time.time()
-
-        # Hard throttle: don't attempt a refresh more often than this interval,
-        # regardless of cache_ttl or errors. This keeps us well under NSX rate
-        # and concurrency limits for group downloads.
         MIN_REFRESH_INTERVAL = 60  # seconds
-        if now - self._last_refresh_attempt < MIN_REFRESH_INTERVAL:
-            return
-        self._last_refresh_attempt = now
 
-        if self._groups and (now - self._groups_last_refresh) < self.config.cache_ttl:
-            return
+        if not force:
+            if self._groups and (now - self._last_refresh_attempt) < MIN_REFRESH_INTERVAL:
+                return
+            if self._groups and (now - self._groups_last_refresh) < self.config.cache_ttl:
+                return
 
         try:
             # Use domain-specific groups endpoint (default domain)
@@ -187,7 +188,8 @@ class NSXTClient:
 
             self._groups = groups
             self._groups_last_refresh = now
-            
+            self._last_refresh_attempt = now
+
             # Build lookup maps for nested group resolution
             self._groups_by_path = {}
             self._groups_by_id = {}
@@ -247,18 +249,19 @@ class NSXTClient:
         self._store_in_cache(ip_address, selected)
         return selected
 
-    def lookup_all_ip_groups(self, ip_address: str) -> List[str]:
+    def lookup_all_ip_groups(self, ip_address: str, refresh: bool = False) -> List[str]:
         """
         Lookup all NSX groups that contain the given IP address.
         Includes matches through nested groups and returns a stable order.
 
         Args:
             ip_address: IP address to lookup
+            refresh: If True, force a full NSX group catalog reload before matching.
 
         Returns:
             Sorted list of unique group names (smallest groups first).
         """
-        self._refresh_groups_if_needed()
+        self._refresh_groups_if_needed(force=refresh)
 
         matching: List[Tuple[str, int]] = []
         for group_detail in self._groups:

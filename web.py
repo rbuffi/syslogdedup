@@ -201,6 +201,10 @@ def create_inner_app() -> FastAPI:
     def api_nsx_ip_groups(
         src_ip: str = Query("", description="Exact source IP to resolve NSX groups for"),
         dest_ip: str = Query("", description="Exact destination IP to resolve NSX groups for"),
+        refresh: bool = Query(
+            False,
+            description="If true, force one full NSX group catalog reload before lookups",
+        ),
     ):
         """Resolve source/destination IP group memberships directly from NSX-T."""
         if not nsxt:
@@ -210,10 +214,12 @@ def create_inner_app() -> FastAPI:
         destination_ip = (dest_ip or "").strip()
         out = {"source_groups": [], "dest_groups": []}
 
+        force_catalog = refresh
         if source_ip:
-            out["source_groups"] = nsxt.lookup_all_ip_groups(source_ip)
+            out["source_groups"] = nsxt.lookup_all_ip_groups(source_ip, refresh=force_catalog)
+            force_catalog = False
         if destination_ip:
-            out["dest_groups"] = nsxt.lookup_all_ip_groups(destination_ip)
+            out["dest_groups"] = nsxt.lookup_all_ip_groups(destination_ip, refresh=force_catalog)
 
         return JSONResponse(out)
 

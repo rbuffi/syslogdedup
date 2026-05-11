@@ -563,7 +563,8 @@
       return out;
     }
 
-    async function fetchNsxGroupsForModal(srcIp, destIp) {
+    async function fetchNsxGroupsForModal(srcIp, destIp, opts) {
+      const options = opts || {};
       const s = (srcIp || '').trim();
       const d = (destIp || '').trim();
       const out = { source_groups: [], dest_groups: [] };
@@ -571,6 +572,7 @@
       const params = new URLSearchParams();
       if (s) params.set('src_ip', s);
       if (d) params.set('dest_ip', d);
+      if (options.forceRefresh) params.set('refresh', 'true');
       const r = await fetch(appUrl('/api/nsx/ip-groups') + '?' + params.toString());
       if (!r.ok) throw new Error(r.statusText);
       const data = await r.json();
@@ -592,13 +594,12 @@
       const previousSource = ruleSourceGroup.value.trim();
       const previousDest = ruleDestGroup.value.trim();
 
-      const mergedSource = uniqueNonEmpty([]
-        .concat(getSelectGroupValues(ruleSourceGroup))
+      const replaceFromNsx = !!options.replaceFromNsxRefresh;
+      const mergedSource = uniqueNonEmpty((replaceFromNsx ? [] : getSelectGroupValues(ruleSourceGroup))
         .concat(Array.isArray(ruleContext && ruleContext.sourceGroups) ? ruleContext.sourceGroups : [])
         .concat((ruleContext && ruleContext.sourceGroup) || [])
         .concat(Array.isArray(sourceGroups) ? sourceGroups : []));
-      const mergedDest = uniqueNonEmpty([]
-        .concat(getSelectGroupValues(ruleDestGroup))
+      const mergedDest = uniqueNonEmpty((replaceFromNsx ? [] : getSelectGroupValues(ruleDestGroup))
         .concat(Array.isArray(ruleContext && ruleContext.destGroups) ? ruleContext.destGroups : [])
         .concat((ruleContext && ruleContext.destGroup) || [])
         .concat(Array.isArray(destGroups) ? destGroups : []));
@@ -628,8 +629,11 @@
       const preserveSelection = !!options.preserveSelection;
       clearRuleStatusError();
       try {
-        const groups = await fetchNsxGroupsForModal(ruleContext.srcIp, ruleContext.destIp);
-        mergeModalGroupOptions(groups.source_groups, groups.dest_groups, { preserveSelection });
+        const groups = await fetchNsxGroupsForModal(ruleContext.srcIp, ruleContext.destIp, { forceRefresh: true });
+        mergeModalGroupOptions(groups.source_groups, groups.dest_groups, {
+          preserveSelection,
+          replaceFromNsxRefresh: true,
+        });
       } catch (e) {
         setRuleStatusError('Failed to refresh groups: ' + e.message);
       }
