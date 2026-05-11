@@ -256,12 +256,20 @@ class NSXTClient:
 
         Args:
             ip_address: IP address to lookup
-            refresh: If True, force a full NSX group catalog reload before matching.
+            refresh: If True, re-run matching on the in-memory catalog. A full NSX
+                catalog download runs only when no catalog is loaded yet (avoids
+                request timeouts on every modal refresh).
 
         Returns:
             Sorted list of unique group names (smallest groups first).
         """
-        self._refresh_groups_if_needed(force=refresh)
+        if refresh:
+            if self._groups:
+                pass
+            else:
+                self._refresh_groups_if_needed(force=True)
+        else:
+            self._refresh_groups_if_needed(force=False)
 
         matching: List[Tuple[str, int]] = []
         for group_detail in self._groups:

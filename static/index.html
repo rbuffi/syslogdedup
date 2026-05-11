@@ -574,7 +574,17 @@
       if (d) params.set('dest_ip', d);
       if (options.forceRefresh) params.set('refresh', 'true');
       const r = await fetch(appUrl('/api/nsx/ip-groups') + '?' + params.toString());
-      if (!r.ok) throw new Error(r.statusText);
+      if (!r.ok) {
+        let detail = r.statusText || String(r.status);
+        const errText = await r.text();
+        try {
+          const errBody = JSON.parse(errText);
+          if (errBody && errBody.detail) detail = String(errBody.detail);
+        } catch (_) {
+          if (errText) detail = errText.slice(0, 200);
+        }
+        throw new Error(detail);
+      }
       const data = await r.json();
       out.source_groups = Array.isArray(data.source_groups) ? data.source_groups : [];
       out.dest_groups = Array.isArray(data.dest_groups) ? data.dest_groups : [];
