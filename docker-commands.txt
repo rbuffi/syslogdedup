@@ -1,7 +1,7 @@
 docker buildx build \
   --platform linux/amd64 \
   -f Dockerfile.syslog \
-  -t rbuffing/syslogdedup-syslog:1.4 \
+  -t rbuffing/syslogdedup-syslog:1.16 \
   --push \
   .
 
