@@ -1,8 +1,10 @@
 """Web API and UI for listing firewall rules (read-only). Run with: WEB_ONLY=true uvicorn web:app --host 0.0.0.0 --port 8080"""
 import json
 import os
+import threading
+import time
 from pathlib import Path
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -28,6 +30,11 @@ except Exception:
     nsxt = None
 
 static_dir = Path(__file__).resolve().parent / "static"
+
+# Short TTL cache for full group dropdown lists (no src_ip/dest_ip); reduces heavy DISTINCT/unnest queries.
+_GROUPS_CACHE_TTL_SEC = 45.0
+_groups_cache_lock = threading.Lock()
+_groups_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
 
 
 def parse_protocols_csv(raw: str) -> List[str]:
@@ -83,7 +90,21 @@ def create_inner_app() -> FastAPI:
         dest_ip: str = Query("", description="Filter destination groups by exact destination IP"),
     ):
         """Distinct source_group and dest_group for dropdowns."""
-        return pg.get_groups(src_ip=src_ip or None, dest_ip=dest_ip or None)
+        s = (src_ip or "").strip()
+        d = (dest_ip or "").strip()
+        if not s and not d:
+            now = time.monotonic()
+            with _groups_cache_lock:
+                cached = _groups_cache["data"]
+                ts = _groups_cache["ts"]
+                if cached is not None and (now - ts) < _GROUPS_CACHE_TTL_SEC:
+                    return cached
+        out = pg.get_groups(src_ip=s or None, dest_ip=d or None)
+        if not s and not d:
+            with _groups_cache_lock:
+                _groups_cache["data"] = out
+                _groups_cache["ts"] = time.monotonic()
+        return out
 
     @inner.get("/api/rules")
     def api_rules(

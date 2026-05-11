@@ -123,8 +123,54 @@ class PostgresClient:
                     """,
                     (NO_GROUP_VALUE,),
                 )
+                self._ensure_performance_indexes(cur)
         except Exception as e:
             logger.error(f"Failed to ensure PostgreSQL table: {e}")
+
+    def _ensure_performance_indexes(self, cur) -> None:
+        """Create indexes for common UI filters (idempotent). GIN/trgm requires pg_trgm."""
+        t = self.config.table
+        ng = NO_GROUP_VALUE.replace("'", "''")
+
+        def run(sql: str) -> None:
+            try:
+                cur.execute(sql)
+            except Exception as e:
+                logger.warning("Index DDL skipped or failed: %s", e)
+
+        try:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+        except Exception as e:
+            logger.warning(
+                "pg_trgm extension unavailable (%s); skipping GIN trigram indexes on IP columns.",
+                e,
+            )
+        else:
+            run(
+                f"CREATE INDEX IF NOT EXISTS {t}_src_ip_trgm_idx ON {t} USING gin (src_ip gin_trgm_ops)"
+            )
+            run(
+                f"CREATE INDEX IF NOT EXISTS {t}_dest_ip_trgm_idx ON {t} USING gin (dest_ip gin_trgm_ops)"
+            )
+
+        run(f"CREATE INDEX IF NOT EXISTS {t}_ts_desc_idx ON {t} (ts DESC)")
+        run(f"CREATE INDEX IF NOT EXISTS {t}_dest_port_idx ON {t} (dest_port)")
+        run(
+            f"CREATE INDEX IF NOT EXISTS {t}_src_group_norm_idx ON {t} "
+            f"((COALESCE(NULLIF(src_group, ''), '{ng}')))"
+        )
+        run(
+            f"CREATE INDEX IF NOT EXISTS {t}_dest_group_norm_idx ON {t} "
+            f"((COALESCE(NULLIF(dest_group, ''), '{ng}')))"
+        )
+        run(
+            f"CREATE INDEX IF NOT EXISTS {t}_protocol_upper_idx ON {t} "
+            f"((UPPER(COALESCE(protocol, ''))))"
+        )
+        run(
+            f"CREATE INDEX IF NOT EXISTS {t}_result_lower_idx ON {t} "
+            f"((LOWER(COALESCE(result, ''))))"
+        )
 
     def write_log(
         self,
