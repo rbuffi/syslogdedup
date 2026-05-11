@@ -34,6 +34,10 @@ def parse_protocols_csv(raw: str) -> List[str]:
     return [p.strip().upper() for p in (raw or "").split(",") if p.strip()]
 
 
+def parse_exclude_csv(raw: str) -> List[str]:
+    return [p.strip() for p in (raw or "").split(",") if p.strip()]
+
+
 def parse_result(raw: str) -> str:
     return (raw or "").strip().lower()
 
@@ -91,6 +95,9 @@ def create_inner_app() -> FastAPI:
         dest_port: str = Query("", description="Filter by destination port (text)"),
         protocols: str = Query("", description="Comma-separated protocol filter (e.g. TCP,UDP,FIN,RST)"),
         result: str = Query("", description="Filter by result (pass/drop)"),
+        exclude_src_ip: str = Query("", description="Comma-separated src IP substrings to exclude"),
+        exclude_dest_ip: str = Query("", description="Comma-separated dest IP substrings to exclude"),
+        exclude_dest_port: str = Query("", description="Comma-separated dest ports to exclude (exact)"),
     ):
         """Flat list of rules; optional filter by source_group, dest_group."""
         return pg.get_rules(
@@ -102,6 +109,9 @@ def create_inner_app() -> FastAPI:
             dest_port=dest_port or None,
             protocols=parse_protocols_csv(protocols),
             result=parse_result(result),
+            exclude_src_ip=parse_exclude_csv(exclude_src_ip),
+            exclude_dest_ip=parse_exclude_csv(exclude_dest_ip),
+            exclude_dest_port=parse_exclude_csv(exclude_dest_port),
         )
 
     @inner.get("/api/rules/grouped")
@@ -114,6 +124,9 @@ def create_inner_app() -> FastAPI:
         dest_port: str = Query("", description="Filter by destination port (text)"),
         protocols: str = Query("", description="Comma-separated protocol filter (e.g. TCP,UDP,FIN,RST)"),
         result: str = Query("", description="Filter by result (pass/drop)"),
+        exclude_src_ip: str = Query("", description="Comma-separated src IP substrings to exclude"),
+        exclude_dest_ip: str = Query("", description="Comma-separated dest IP substrings to exclude"),
+        exclude_dest_port: str = Query("", description="Comma-separated dest ports to exclude (exact)"),
     ):
         """Rules grouped by (source_group, dest_group) with aggregated dest_ports."""
         return pg.get_rules_grouped(
@@ -125,6 +138,9 @@ def create_inner_app() -> FastAPI:
             dest_port=dest_port or None,
             protocols=parse_protocols_csv(protocols),
             result=parse_result(result),
+            exclude_src_ip=parse_exclude_csv(exclude_src_ip),
+            exclude_dest_ip=parse_exclude_csv(exclude_dest_ip),
+            exclude_dest_port=parse_exclude_csv(exclude_dest_port),
         )
 
     @inner.get("/api/protocols")
@@ -159,6 +175,26 @@ def create_inner_app() -> FastAPI:
             raise HTTPException(status_code=503, detail="NSX-T Manager is not configured for this server")
         services = nsxt.list_services()
         return JSONResponse(services)
+
+    @inner.get("/api/nsx/ip-groups")
+    def api_nsx_ip_groups(
+        src_ip: str = Query("", description="Exact source IP to resolve NSX groups for"),
+        dest_ip: str = Query("", description="Exact destination IP to resolve NSX groups for"),
+    ):
+        """Resolve source/destination IP group memberships directly from NSX-T."""
+        if not nsxt:
+            raise HTTPException(status_code=503, detail="NSX-T Manager is not configured for this server")
+
+        source_ip = (src_ip or "").strip()
+        destination_ip = (dest_ip or "").strip()
+        out = {"source_groups": [], "dest_groups": []}
+
+        if source_ip:
+            out["source_groups"] = nsxt.lookup_all_ip_groups(source_ip)
+        if destination_ip:
+            out["dest_groups"] = nsxt.lookup_all_ip_groups(destination_ip)
+
+        return JSONResponse(out)
 
     @inner.post("/api/nsx/rules")
     def api_nsx_create_rule(req: CreateRuleRequest):

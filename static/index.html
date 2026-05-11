@@ -53,6 +53,20 @@
       min-width: 160px;
     }
     .filters select:focus { outline: none; border-color: var(--accent); }
+    .filters input[type="text"] {
+      background: var(--surface);
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      min-width: 140px;
+    }
+    .filters input[type="text"]:focus { outline: none; border-color: var(--accent); }
+    .filter-excludes {
+      margin-top: -0.25rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+    }
     .protocol-dropdown {
       position: relative;
       min-width: 190px;
@@ -172,8 +186,8 @@
       background: var(--surface);
       border-radius: 10px;
       border: 1px solid var(--border);
-      max-width: 520px;
-      width: 100%;
+      width: min(920px, calc(100vw - 2rem));
+      max-width: 920px;
       padding: 1rem 1.25rem 1.1rem;
       box-shadow: 0 18px 45px rgba(0, 0, 0, 0.65);
       color: var(--text);
@@ -207,6 +221,14 @@
       padding: 0.35rem 0.6rem;
       border-radius: 6px;
       font-size: 0.9rem;
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+    #ruleSourceGroup,
+    #ruleDestGroup {
+      text-overflow: ellipsis;
     }
     .modal-form select:focus {
       outline: none;
@@ -290,6 +312,7 @@
     }
     @media (max-width: 640px) {
       .modal {
+        width: calc(100vw - 1.5rem);
         max-width: 100%;
         margin: 0 0.75rem;
       }
@@ -359,6 +382,20 @@
       </select>
     </label>
   </div>
+  <div class="filters filter-excludes">
+    <label>
+      Exclude ports
+      <input id="excludePortFilter" type="text" placeholder="e.g. 443, 8080" />
+    </label>
+    <label>
+      Exclude src IP
+      <input id="excludeSrcIpFilter" type="text" placeholder="comma-separated…" />
+    </label>
+    <label>
+      Exclude dest IP
+      <input id="excludeDestIpFilter" type="text" placeholder="comma-separated…" />
+    </label>
+  </div>
   <div id="loading" class="loading" style="display: none;">Loading…</div>
   <div id="error" class="error" style="display: none;"></div>
   <div id="tableWrap"></div>
@@ -378,6 +415,9 @@
           Destination group
           <select id="ruleDestGroup"></select>
         </label>
+        <div class="full-width button-row">
+          <button type="button" class="btn btn-ghost" id="ruleRefreshGroupsBtn">Ververs groepen</button>
+        </div>
         <label>
           Policy
           <select id="rulePolicy"></select>
@@ -442,6 +482,9 @@
     const srcIpFilter = document.getElementById('srcIpFilter');
     const destIpFilter = document.getElementById('destIpFilter');
     const portFilter = document.getElementById('portFilter');
+    const excludePortFilter = document.getElementById('excludePortFilter');
+    const excludeSrcIpFilter = document.getElementById('excludeSrcIpFilter');
+    const excludeDestIpFilter = document.getElementById('excludeDestIpFilter');
     const protocolDropdown = document.getElementById('protocolDropdown');
     const protocolDropdownBtn = document.getElementById('protocolDropdownBtn');
     const protocolOptions = document.getElementById('protocolOptions');
@@ -459,6 +502,7 @@
     const ruleIpProtocol = document.getElementById('ruleIpProtocol');
     const ruleL4Protocol = document.getElementById('ruleL4Protocol');
     const ruleService = document.getElementById('ruleService');
+    const ruleRefreshGroupsBtn = document.getElementById('ruleRefreshGroupsBtn');
     const ruleRefreshServicesBtn = document.getElementById('ruleRefreshServicesBtn');
     const ruleServiceDetails = document.getElementById('ruleServiceDetails');
     const ruleComment = document.getElementById('ruleComment');
@@ -517,6 +561,78 @@
         out.dest_groups = data.dest_groups || [];
       }
       return out;
+    }
+
+    async function fetchNsxGroupsForModal(srcIp, destIp) {
+      const s = (srcIp || '').trim();
+      const d = (destIp || '').trim();
+      const out = { source_groups: [], dest_groups: [] };
+      if (!s && !d) return out;
+      const params = new URLSearchParams();
+      if (s) params.set('src_ip', s);
+      if (d) params.set('dest_ip', d);
+      const r = await fetch(appUrl('/api/nsx/ip-groups') + '?' + params.toString());
+      if (!r.ok) throw new Error(r.statusText);
+      const data = await r.json();
+      out.source_groups = Array.isArray(data.source_groups) ? data.source_groups : [];
+      out.dest_groups = Array.isArray(data.dest_groups) ? data.dest_groups : [];
+      return out;
+    }
+
+    function getSelectGroupValues(selectEl) {
+      if (!selectEl) return [];
+      return Array.from(selectEl.options || [])
+        .map(opt => String(opt.value || '').trim())
+        .filter(Boolean);
+    }
+
+    function mergeModalGroupOptions(sourceGroups, destGroups, opts) {
+      const options = opts || {};
+      const preserveSelection = !!options.preserveSelection;
+      const previousSource = ruleSourceGroup.value.trim();
+      const previousDest = ruleDestGroup.value.trim();
+
+      const mergedSource = uniqueNonEmpty([]
+        .concat(getSelectGroupValues(ruleSourceGroup))
+        .concat(Array.isArray(ruleContext && ruleContext.sourceGroups) ? ruleContext.sourceGroups : [])
+        .concat((ruleContext && ruleContext.sourceGroup) || [])
+        .concat(Array.isArray(sourceGroups) ? sourceGroups : []));
+      const mergedDest = uniqueNonEmpty([]
+        .concat(getSelectGroupValues(ruleDestGroup))
+        .concat(Array.isArray(ruleContext && ruleContext.destGroups) ? ruleContext.destGroups : [])
+        .concat((ruleContext && ruleContext.destGroup) || [])
+        .concat(Array.isArray(destGroups) ? destGroups : []));
+
+      ruleSourceGroup.innerHTML = ['<option value="">(select)</option>']
+        .concat(mergedSource.map(g => '<option value="' + escapeAttr(g) + '">' + escapeHtml(g) + '</option>'))
+        .join('');
+      ruleDestGroup.innerHTML = ['<option value="">(select)</option>']
+        .concat(mergedDest.map(g => '<option value="' + escapeAttr(g) + '">' + escapeHtml(g) + '</option>'))
+        .join('');
+
+      const preferredSource = preserveSelection ? previousSource : ((ruleContext && ruleContext.sourceGroup) || '');
+      const preferredDest = preserveSelection ? previousDest : ((ruleContext && ruleContext.destGroup) || '');
+      if (preferredSource && mergedSource.includes(preferredSource)) {
+        ruleSourceGroup.value = preferredSource;
+      }
+      if (preferredDest && mergedDest.includes(preferredDest)) {
+        ruleDestGroup.value = preferredDest;
+      }
+
+      updateGroupSelectTitles();
+    }
+
+    async function refreshGroupsForModal(opts) {
+      if (!ruleContext) return;
+      const options = opts || {};
+      const preserveSelection = !!options.preserveSelection;
+      clearRuleStatusError();
+      try {
+        const groups = await fetchNsxGroupsForModal(ruleContext.srcIp, ruleContext.destIp);
+        mergeModalGroupOptions(groups.source_groups, groups.dest_groups, { preserveSelection });
+      } catch (e) {
+        setRuleStatusError('Failed to refresh groups: ' + e.message);
+      }
     }
 
     async function loadGroups() {
@@ -612,6 +728,15 @@
       return (resultFilter.value || '').trim().toLowerCase();
     }
 
+    function appendExcludeParams(params) {
+      const exPort = (excludePortFilter && excludePortFilter.value || '').trim();
+      const exSrc = (excludeSrcIpFilter && excludeSrcIpFilter.value || '').trim();
+      const exDest = (excludeDestIpFilter && excludeDestIpFilter.value || '').trim();
+      if (exPort) params.set('exclude_dest_port', exPort);
+      if (exSrc) params.set('exclude_src_ip', exSrc);
+      if (exDest) params.set('exclude_dest_ip', exDest);
+    }
+
     function ensureDefaultProtocolSelectionIfEmpty() {
       if (hasAnyProtocolSelected()) return;
       const defaults = new Set(['TCP', 'UDP']);
@@ -674,6 +799,7 @@
         if (port) params.set('dest_port', port);
         if (protocolsParam) params.set('protocols', protocolsParam);
         if (result) params.set('result', result);
+        appendExcludeParams(params);
         const r = await fetch(appUrl('/api/rules/grouped') + '?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
@@ -1051,6 +1177,7 @@
         if (port) params.set('dest_port', port);
         if (protocolsParam) params.set('protocols', protocolsParam);
         if (result) params.set('result', result);
+        appendExcludeParams(params);
         const r = await fetch(appUrl('/api/rules') + '?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
@@ -1087,6 +1214,7 @@
 
       rulePolicy.innerHTML = '<option value="">Loading…</option>';
       ruleService.innerHTML = '<option value="">Loading…</option>';
+      ruleRefreshGroupsBtn.disabled = true;
       ruleRefreshServicesBtn.disabled = true;
       modalBackdrop.style.display = 'flex';
 
@@ -1110,6 +1238,7 @@
       if (ruleContext.destGroup && modalDestGroups.includes(ruleContext.destGroup)) {
         ruleDestGroup.value = ruleContext.destGroup;
       }
+      updateGroupSelectTitles();
 
       ensurePoliciesLoaded()
         .then(policies => {
@@ -1127,7 +1256,15 @@
         });
 
       await refreshServicesForModal({ preserveSelection: false });
+      ruleRefreshGroupsBtn.disabled = false;
       ruleRefreshServicesBtn.disabled = false;
+    }
+
+    function updateGroupSelectTitles() {
+      const sourceText = ruleSourceGroup.value.trim();
+      const destText = ruleDestGroup.value.trim();
+      ruleSourceGroup.title = sourceText || '';
+      ruleDestGroup.title = destText || '';
     }
 
     function closeRuleModal() {
@@ -1210,6 +1347,9 @@
       await loadRules();
     });
     portFilter.addEventListener('change', loadRules);
+    if (excludePortFilter) excludePortFilter.addEventListener('change', loadRules);
+    if (excludeSrcIpFilter) excludeSrcIpFilter.addEventListener('change', loadRules);
+    if (excludeDestIpFilter) excludeDestIpFilter.addEventListener('change', loadRules);
     protocolDropdownBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       toggleProtocolDropdown(!protocolDropdown.classList.contains('open'));
@@ -1227,6 +1367,29 @@
     resultFilter.addEventListener('change', loadRules);
     ruleCancelBtn.addEventListener('click', closeRuleModal);
     ruleSubmitBtn.addEventListener('click', submitRule);
+    ruleSourceGroup.addEventListener('change', updateGroupSelectTitles);
+    ruleDestGroup.addEventListener('change', updateGroupSelectTitles);
+    ruleRefreshGroupsBtn.addEventListener('click', async () => {
+      if (!ruleContext) return;
+      const previousStatusText = ruleStatus.textContent;
+      const previousStatusIsOk = ruleStatus.classList.contains('ok');
+      const previousStatusIsError = ruleStatus.classList.contains('error');
+      ruleRefreshGroupsBtn.disabled = true;
+      ruleStatus.textContent = 'Refreshing groups…';
+      ruleStatus.classList.remove('error');
+      ruleStatus.classList.add('ok');
+      await refreshGroupsForModal({ preserveSelection: true });
+      if (ruleError.style.display !== 'block') {
+        ruleStatus.textContent = 'Groups refreshed.';
+      } else if (previousStatusText) {
+        ruleStatus.textContent = previousStatusText;
+        ruleStatus.classList.toggle('ok', previousStatusIsOk);
+        ruleStatus.classList.toggle('error', previousStatusIsError);
+      } else {
+        ruleStatus.textContent = '';
+      }
+      ruleRefreshGroupsBtn.disabled = false;
+    });
     ruleService.addEventListener('change', updateSelectedServiceDetails);
     ruleRefreshServicesBtn.addEventListener('click', async () => {
       if (!ruleContext) return;

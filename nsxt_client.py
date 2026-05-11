@@ -246,6 +246,38 @@ class NSXTClient:
         # Store in cache (even if empty list) so repeated lookups are cheap
         self._store_in_cache(ip_address, selected)
         return selected
+
+    def lookup_all_ip_groups(self, ip_address: str) -> List[str]:
+        """
+        Lookup all NSX groups that contain the given IP address.
+        Includes matches through nested groups and returns a stable order.
+
+        Args:
+            ip_address: IP address to lookup
+
+        Returns:
+            Sorted list of unique group names (smallest groups first).
+        """
+        self._refresh_groups_if_needed()
+
+        matching: List[Tuple[str, int]] = []
+        for group_detail in self._groups:
+            if self._ip_matches_group(ip_address, group_detail):
+                name = self._extract_group_name(group_detail)
+                if name:
+                    member_count = int(group_detail.get("member_count", 999999))
+                    matching.append((name, member_count))
+
+        if not matching:
+            return []
+
+        best_count_by_name: Dict[str, int] = {}
+        for name, count in matching:
+            previous = best_count_by_name.get(name)
+            if previous is None or count < previous:
+                best_count_by_name[name] = count
+
+        return [name for name, _count in sorted(best_count_by_name.items(), key=lambda nc: (nc[1], nc[0]))]
     
     def _calculate_member_count(self, group_detail: dict) -> int:
         """

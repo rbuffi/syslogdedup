@@ -1,0 +1,13 @@
+docker buildx build \
+  --platform linux/amd64 \
+  -f Dockerfile.syslog \
+  -t rbuffing/syslogdedup-syslog:1.4 \
+  --push \
+  .
+
+docker buildx build \
+  --platform linux/amd64 \
+  -f Dockerfile.web \
+  -t rbuffing/syslogdedup-web:1.15 \
+  --push \
+  .

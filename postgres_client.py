@@ -30,6 +30,15 @@ class PostgresClient:
     def _normalize_result(result: Optional[str]) -> str:
         return str(result or "").strip().lower()
 
+    @staticmethod
+    def _normalize_exclude_tokens(tokens: Optional[List[str]]) -> List[str]:
+        out: List[str] = []
+        for raw in tokens or []:
+            s = str(raw or "").strip()
+            if s:
+                out.append(s)
+        return out
+
     """Simple PostgreSQL client that writes per-flow rows suitable for Grafana."""
 
     def __init__(self, config: PostgresConfig):
@@ -335,6 +344,9 @@ class PostgresClient:
         dest_port: Optional[str] = None,
         protocols: Optional[List[str]] = None,
         result: Optional[str] = None,
+        exclude_src_ip: Optional[List[str]] = None,
+        exclude_dest_ip: Optional[List[str]] = None,
+        exclude_dest_port: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Return flat list of rules with optional filter by source_group, dest_group."""
         if not self._ensure_conn():
@@ -348,6 +360,9 @@ class PostgresClient:
         dest_port = (dest_port or "").strip()
         protocols_norm = self._normalize_protocols(protocols)
         result_norm = self._normalize_result(result)
+        ex_src = self._normalize_exclude_tokens(exclude_src_ip)
+        ex_dest = self._normalize_exclude_tokens(exclude_dest_ip)
+        ex_port = self._normalize_exclude_tokens(exclude_dest_port)
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -381,6 +396,18 @@ class PostgresClient:
                       AND (%s = '' OR CAST(dest_port AS TEXT) = %s)
                       AND (%s::TEXT[] IS NULL OR UPPER(COALESCE(protocol, '')) = ANY(%s::TEXT[]))
                       AND (%s = '' OR LOWER(COALESCE(result, '')) = %s)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
+                          WHERE TRIM(ex) <> '' AND src_ip ILIKE '%%' || TRIM(ex) || '%%'
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
+                          WHERE TRIM(ex) <> '' AND dest_ip ILIKE '%%' || TRIM(ex) || '%%'
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
+                          WHERE TRIM(ex) <> '' AND CAST(dest_port AS TEXT) = TRIM(ex)
+                      )
                     ORDER BY hit_count DESC, dest_port
                     LIMIT 500
                     """,
@@ -407,6 +434,9 @@ class PostgresClient:
                         protocols_norm if protocols_norm else None,
                         result_norm,
                         result_norm,
+                        ex_src,
+                        ex_dest,
+                        ex_port,
                     ),
                 )
                 rows = cur.fetchall()
@@ -425,6 +455,9 @@ class PostgresClient:
         dest_port: Optional[str] = None,
         protocols: Optional[List[str]] = None,
         result: Optional[str] = None,
+        exclude_src_ip: Optional[List[str]] = None,
+        exclude_dest_ip: Optional[List[str]] = None,
+        exclude_dest_port: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Return rules grouped by (source_group, dest_group) with aggregated dest_ports."""
         if not self._ensure_conn():
@@ -438,6 +471,9 @@ class PostgresClient:
         dest_port = (dest_port or "").strip()
         protocols_norm = self._normalize_protocols(protocols)
         result_norm = self._normalize_result(result)
+        ex_src = self._normalize_exclude_tokens(exclude_src_ip)
+        ex_dest = self._normalize_exclude_tokens(exclude_dest_ip)
+        ex_port = self._normalize_exclude_tokens(exclude_dest_port)
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -459,6 +495,18 @@ class PostgresClient:
                       AND (%s = '' OR CAST(dest_port AS TEXT) = %s)
                       AND (%s::TEXT[] IS NULL OR UPPER(COALESCE(protocol, '')) = ANY(%s::TEXT[]))
                       AND (%s = '' OR LOWER(COALESCE(result, '')) = %s)
+                      AND NOT EXISTS (
+                          SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
+                          WHERE TRIM(ex) <> '' AND src_ip ILIKE '%%' || TRIM(ex) || '%%'
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
+                          WHERE TRIM(ex) <> '' AND dest_ip ILIKE '%%' || TRIM(ex) || '%%'
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
+                          WHERE TRIM(ex) <> '' AND CAST(dest_port AS TEXT) = TRIM(ex)
+                      )
                     GROUP BY src_group, dest_group, direction, result
                     ORDER BY hit_count DESC, source_group, dest_group
                     LIMIT 200
@@ -484,6 +532,9 @@ class PostgresClient:
                         protocols_norm if protocols_norm else None,
                         result_norm,
                         result_norm,
+                        ex_src,
+                        ex_dest,
+                        ex_port,
                     ),
                 )
                 rows = cur.fetchall()
