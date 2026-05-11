@@ -415,6 +415,10 @@
           Destination group
           <select id="ruleDestGroup"></select>
         </label>
+        <label class="full-width">
+          Alleen deze groepen verversen (optioneel, komma’s)
+          <input id="ruleRefreshOnlyGroups" type="text" placeholder="bijv. web-tier, db-tier — leeg = alle groepen" autocomplete="off" />
+        </label>
         <div class="full-width button-row">
           <button type="button" class="btn btn-ghost" id="ruleRefreshGroupsBtn">Ververs groepen</button>
         </div>
@@ -503,6 +507,7 @@
     const ruleL4Protocol = document.getElementById('ruleL4Protocol');
     const ruleService = document.getElementById('ruleService');
     const ruleRefreshGroupsBtn = document.getElementById('ruleRefreshGroupsBtn');
+    const ruleRefreshOnlyGroups = document.getElementById('ruleRefreshOnlyGroups');
     const ruleRefreshServicesBtn = document.getElementById('ruleRefreshServicesBtn');
     const ruleServiceDetails = document.getElementById('ruleServiceDetails');
     const ruleComment = document.getElementById('ruleComment');
@@ -563,6 +568,12 @@
       return out;
     }
 
+    function parseOnlyGroupNamesFromRefreshField() {
+      if (!ruleRefreshOnlyGroups) return [];
+      const raw = ruleRefreshOnlyGroups.value || '';
+      return raw.split(/[,;\n]+/).map(function (x) { return String(x || '').trim(); }).filter(Boolean);
+    }
+
     async function fetchNsxGroupsForModal(srcIp, destIp, opts) {
       const options = opts || {};
       const s = (srcIp || '').trim();
@@ -573,6 +584,10 @@
       if (s) params.set('src_ip', s);
       if (d) params.set('dest_ip', d);
       if (options.forceRefresh) params.set('refresh', 'true');
+      const only = Array.isArray(options.onlyGroupNames) ? options.onlyGroupNames : parseOnlyGroupNamesFromRefreshField();
+      if (options.forceRefresh && only.length) {
+        only.forEach(function (g) { params.append('only_group', g); });
+      }
       const r = await fetch(appUrl('/api/nsx/ip-groups') + '?' + params.toString());
       if (!r.ok) {
         let detail = r.statusText || String(r.status);
@@ -639,7 +654,10 @@
       const preserveSelection = !!options.preserveSelection;
       clearRuleStatusError();
       try {
-        const groups = await fetchNsxGroupsForModal(ruleContext.srcIp, ruleContext.destIp, { forceRefresh: true });
+        const groups = await fetchNsxGroupsForModal(ruleContext.srcIp, ruleContext.destIp, {
+          forceRefresh: true,
+          onlyGroupNames: parseOnlyGroupNamesFromRefreshField(),
+        });
         mergeModalGroupOptions(groups.source_groups, groups.dest_groups, {
           preserveSelection,
           replaceFromNsxRefresh: true,

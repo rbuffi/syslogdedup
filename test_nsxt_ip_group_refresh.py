@@ -126,5 +126,39 @@ class TestMacOnlyGroupSkipsMembers(unittest.TestCase):
             scan.assert_not_called()
 
 
+class TestLookupOnlyNamedGroups(unittest.TestCase):
+    def test_named_only_skips_catalog_reload(self):
+        cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg)
+        detail = {
+            "id": "g1",
+            "display_name": "MyG",
+            "path": "/infra/domains/default/groups/g1",
+            "expression": [{"resource_type": "IPAddressExpression", "ip_addresses": ["10.1.1.1"]}],
+        }
+
+        with patch.object(NSXTClient, "_reload_catalog_from_group_list_only") as rel:
+            with patch.object(NSXTClient, "_resolve_group_detail_for_lookup_name", return_value=detail):
+                out = client.lookup_all_ip_groups("10.1.1.1", refresh=False, only_group_names=["MyG"])
+        rel.assert_not_called()
+        self.assertEqual(out, ["MyG"])
+
+    def test_named_only_returns_empty_when_no_match(self):
+        cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg)
+        detail = {
+            "id": "g1",
+            "display_name": "MyG",
+            "path": "/infra/domains/default/groups/g1",
+            "expression": [{"resource_type": "IPAddressExpression", "ip_addresses": ["10.1.1.1"]}],
+        }
+        with patch.object(NSXTClient, "_reload_catalog_from_group_list_only") as rel:
+            with patch.object(NSXTClient, "_resolve_group_detail_for_lookup_name", return_value=detail):
+                with patch.object(NSXTClient, "_group_ip_matches_members_paginated_scan", return_value=False):
+                    out = client.lookup_all_ip_groups("10.9.9.9", refresh=False, only_group_names=["MyG"])
+        rel.assert_not_called()
+        self.assertEqual(out, [])
+
+
 if __name__ == "__main__":
     unittest.main()

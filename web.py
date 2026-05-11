@@ -205,6 +205,10 @@ def create_inner_app() -> FastAPI:
             False,
             description="If true, reload group metadata from NSX (paginated list only) and re-resolve IPs",
         ),
+        only_group: List[str] = Query(
+            default=[],
+            description="When refresh=true, only check these group ids or display names (repeat query param)",
+        ),
     ):
         """Resolve source/destination IP group memberships directly from NSX-T."""
         if not nsxt:
@@ -213,6 +217,20 @@ def create_inner_app() -> FastAPI:
         source_ip = (src_ip or "").strip()
         destination_ip = (dest_ip or "").strip()
         out = {"source_groups": [], "dest_groups": []}
+
+        names = [x.strip() for x in (only_group or []) if x and str(x).strip()]
+        targeted = bool(refresh) and bool(names)
+
+        if targeted:
+            if source_ip:
+                out["source_groups"] = nsxt.lookup_all_ip_groups(
+                    source_ip, refresh=False, only_group_names=names
+                )
+            if destination_ip:
+                out["dest_groups"] = nsxt.lookup_all_ip_groups(
+                    destination_ip, refresh=False, only_group_names=names
+                )
+            return JSONResponse(out)
 
         force_catalog = refresh
         if source_ip:

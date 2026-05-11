@@ -3,6 +3,7 @@ import logging
 import re
 import threading
 import time
+from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, Dict, List, Any, Tuple
 
@@ -458,7 +459,8 @@ class NSXTClient:
     def _fetch_group_detail_by_id(self, group_id: str) -> Optional[Dict[str, Any]]:
         if not group_id:
             return None
-        detail_url = f"{self.base_url}/policy/api/v1/infra/domains/default/groups/{group_id}"
+        enc = quote(str(group_id).strip(), safe="")
+        detail_url = f"{self.base_url}/policy/api/v1/infra/domains/default/groups/{enc}"
         try:
             detail_resp = self._nsx_get(detail_url, timeout=30)
             detail_resp.raise_for_status()
@@ -466,6 +468,82 @@ class NSXTClient:
         except requests.exceptions.RequestException as e:
             logger.warning("Failed to read group %s: %s", group_id, e)
             return None
+
+    def _resolve_group_detail_for_lookup_name(self, raw_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Resolve a user-supplied group label to a detail dict (from cache or GET by id).
+        Accepts NSX policy id, display_name, path tail, or full path.
+        """
+        key = (raw_name or "").strip()
+        if not key:
+            return None
+
+        hit = self._groups_by_id.get(key) or self._groups_by_path.get(key)
+        if hit is not None:
+            return hit
+
+        for path, g in self._groups_by_path.items():
+            if path.rstrip("/").split("/")[-1] == key:
+                return g
+
+        for g in self._groups:
+            gid = g.get("id", "")
+            if gid == key or self._extract_group_name(g) == key:
+                if gid:
+                    full = self._fetch_group_detail_by_id(gid)
+                    if full:
+                        if not full.get("path") and g.get("path"):
+                            full["path"] = g.get("path", "")
+                        return self._register_group_detail(full)
+                return g
+
+        d = self._fetch_group_detail_by_id(key)
+        if d:
+            return self._register_group_detail(d)
+        return None
+
+    def _lookup_all_ip_groups_for_named_candidates(self, ip_address: str, names: List[str]) -> List[str]:
+        """Membership check only for the given group names/ids (no full domain list)."""
+        ordered_unique: List[str] = []
+        seen = set()
+        for n in names:
+            s = (n or "").strip()
+            if s and s not in seen:
+                seen.add(s)
+                ordered_unique.append(s)
+
+        by_id: Dict[str, Dict[str, Any]] = {}
+        for raw in ordered_unique:
+            detail = self._resolve_group_detail_for_lookup_name(raw)
+            if detail and detail.get("id"):
+                by_id.setdefault(str(detail["id"]), detail)
+
+        matched_details: List[Dict[str, Any]] = []
+        for detail in by_id.values():
+            if self._ip_matches_group(ip_address, detail):
+                matched_details.append(detail)
+
+        matching: List[Tuple[str, int]] = []
+        for group_detail in matched_details:
+            name = self._extract_group_name(group_detail)
+            if not name:
+                continue
+            group_detail["member_count"] = self._calculate_member_count(group_detail)
+            if int(group_detail["member_count"]) >= 999999:
+                self._ensure_ip_members_loaded(group_detail)
+                group_detail["member_count"] = self._calculate_member_count(group_detail)
+            matching.append((name, int(group_detail["member_count"])))
+
+        if not matching:
+            return []
+
+        best_count_by_name: Dict[str, int] = {}
+        for name, count in matching:
+            previous = best_count_by_name.get(name)
+            if previous is None or count < previous:
+                best_count_by_name[name] = count
+
+        return [name for name, _count in sorted(best_count_by_name.items(), key=lambda nc: (nc[1], nc[0]))]
 
     def _register_group_detail(self, detail: Dict[str, Any]) -> Dict[str, Any]:
         """Merge a fetched group into the catalog and maps; return the canonical dict."""
@@ -540,7 +618,12 @@ class NSXTClient:
         self._store_in_cache(ip_address, selected)
         return selected
 
-    def lookup_all_ip_groups(self, ip_address: str, refresh: bool = False) -> List[str]:
+    def lookup_all_ip_groups(
+        self,
+        ip_address: str,
+        refresh: bool = False,
+        only_group_names: Optional[List[str]] = None,
+    ) -> List[str]:
         """
         Lookup all NSX groups that contain the given IP address.
         Includes matches through nested groups and returns a stable order.
@@ -551,10 +634,20 @@ class NSXTClient:
                 paginated list endpoint, then resolve membership (IP members are
                 fetched lazily per group as needed). Avoids downloading every
                 group's full member list up front.
+            only_group_names: If non-empty, skip full catalog load and only evaluate
+                these groups (by id, display_name, or path tail). Intended for UI
+                refresh with explicit candidate groups.
 
         Returns:
             Sorted list of unique group names (smallest groups first).
         """
+        filtered = [x.strip() for x in (only_group_names or []) if x and str(x).strip()]
+        if filtered:
+            cache_key = self._get_cache_key(ip_address)
+            self._ip_cache.pop(cache_key, None)
+            self._cache_timestamps.pop(cache_key, None)
+            return self._lookup_all_ip_groups_for_named_candidates(ip_address, filtered)
+
         if refresh:
             self._reload_catalog_from_group_list_only()
         else:
