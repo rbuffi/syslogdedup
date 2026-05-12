@@ -992,6 +992,13 @@
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    function formatLastHit(value) {
+      if (value == null || value === '') return '—';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return String(value);
+      return d.toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' });
+    }
+
     function onPortClick(e) {
       e.preventDefault();
       const a = e.target.closest('a');
@@ -1026,7 +1033,7 @@
           lastSource = sg;
           lastDest = dg;
           trs.push(
-            '<tr class="group-header"><td colspan="8">' +
+            '<tr class="group-header"><td colspan="9">' +
             escapeHtml(sg || '—') + ' → ' + escapeHtml(dg || '—') +
             '</td></tr>'
           );
@@ -1045,13 +1052,14 @@
           '<td>' + escapeHtml(row.direction ?? '') + '</td>' +
           '<td>' + escapeHtml(row.result ?? '') + '</td>' +
           '<td>' + escapeHtml(String(row.hit_count ?? '')) + '</td>' +
+          '<td>' + escapeHtml(formatLastHit(row.last_hit)) + '</td>' +
           '</tr>'
         );
       }
       container.innerHTML =
         '<table><thead><tr>' +
         '<th>Source group</th><th>Dest group</th><th>Dest port</th>' +
-        '<th>Src IP</th><th>Dest IP</th><th>Direction</th><th>Result</th><th>Hit count</th>' +
+        '<th>Src IP</th><th>Dest IP</th><th>Direction</th><th>Result</th><th>Hit count</th><th>Last hit</th>' +
         '</tr></thead><tbody>' + trs.join('') + '</tbody></table>';
       container.querySelectorAll('.port-link').forEach(el => el.addEventListener('click', onPortClick));
     }
@@ -1160,6 +1168,7 @@
               : ports.slice(0, 10).join(', ') + `, +${ports.length - 10} more`);
         const hitCount = row.hit_count ?? '';
         const result = row.result ?? '';
+        const lastHit = formatLastHit(row.last_hit);
         trs.push(
           '<tr>' +
           '<td>' + escapeHtml(sg) + '</td>' +
@@ -1167,6 +1176,7 @@
           '<td>' + escapeHtml(portsSummary) + '</td>' +
           '<td>' + escapeHtml(result) + '</td>' +
           '<td>' + escapeHtml(String(hitCount)) + '</td>' +
+          '<td>' + escapeHtml(lastHit) + '</td>' +
           '<td><button type="button" class="btn btn-ghost" data-sg="' + escapeAttr(sg) + '" data-dg="' + escapeAttr(dg) + '">Details</button></td>' +
           '</tr>'
         );
@@ -1174,7 +1184,7 @@
       tableWrap.innerHTML =
         '<table><thead><tr>' +
         '<th>Source group</th><th>Dest group</th><th>Dest ports</th>' +
-        '<th>Result</th><th>Hit count</th><th></th>' +
+        '<th>Result</th><th>Hit count</th><th>Last hit</th><th></th>' +
         '</tr></thead><tbody>' + trs.join('') + '</tbody></table>';
 
       tableWrap.querySelectorAll('button[data-sg]').forEach(btn => {

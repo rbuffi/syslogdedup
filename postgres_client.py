@@ -432,7 +432,8 @@ class PostgresClient:
                         hit_count,
                         protocol,
                         rule_id,
-                        rule_name
+                        rule_name,
+                        ts AS last_hit
                     FROM {t}
                     WHERE (%s = '' OR COALESCE(NULLIF(src_group, ''), %s) = %s)
                       AND (%s = '' OR COALESCE(NULLIF(dest_group, ''), %s) = %s)
@@ -531,7 +532,8 @@ class PostgresClient:
                             FILTER (WHERE dest_port IS NOT NULL) AS dest_ports,
                         direction,
                         result,
-                        SUM(hit_count)::BIGINT AS hit_count
+                        SUM(hit_count)::BIGINT AS hit_count,
+                        MAX(ts) AS last_hit
                     FROM {t}
                     WHERE (%s = '' OR COALESCE(NULLIF(src_group, ''), %s) = %s)
                       AND (%s = '' OR COALESCE(NULLIF(dest_group, ''), %s) = %s)

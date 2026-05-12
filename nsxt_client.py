@@ -415,23 +415,36 @@ class NSXTClient:
             start = end
         return chunks
 
-    def _match_groups_chunk(self, ip_address: str, chunk: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        return [g for g in chunk if self._ip_matches_group(ip_address, g)]
+    def _match_groups_chunk(
+        self,
+        ip_address: str,
+        chunk: List[Dict[str, Any]],
+        allow_nested: bool = True,
+    ) -> List[Dict[str, Any]]:
+        return [g for g in chunk if self._ip_matches_group(ip_address, g, allow_nested=allow_nested)]
 
-    def _collect_groups_matching_ip(self, ip_address: str) -> List[Dict[str, Any]]:
+    def _collect_groups_matching_ip(
+        self,
+        ip_address: str,
+        *,
+        allow_nested: bool = True,
+    ) -> List[Dict[str, Any]]:
         """All group dicts in the current catalog that contain ip_address."""
         all_g = self._groups
         workers = max(1, int(self.config.ip_group_lookup_parallelism))
         if workers <= 1 or len(all_g) < 64:
-            return [g for g in all_g if self._ip_matches_group(ip_address, g)]
+            return [g for g in all_g if self._ip_matches_group(ip_address, g, allow_nested=allow_nested)]
 
         chunks = self._split_catalog_into_chunks(all_g, workers)
         if len(chunks) <= 1:
-            return [g for g in all_g if self._ip_matches_group(ip_address, g)]
+            return [g for g in all_g if self._ip_matches_group(ip_address, g, allow_nested=allow_nested)]
 
         out: List[Dict[str, Any]] = []
         with ThreadPoolExecutor(max_workers=len(chunks)) as ex:
-            futures = [ex.submit(self._match_groups_chunk, ip_address, ch) for ch in chunks]
+            futures = [
+                ex.submit(self._match_groups_chunk, ip_address, ch, allow_nested)
+                for ch in chunks
+            ]
             for fut in as_completed(futures):
                 out.extend(fut.result())
         return out
@@ -463,11 +476,68 @@ class NSXTClient:
         detail_url = f"{self.base_url}/policy/api/v1/infra/domains/default/groups/{enc}"
         try:
             detail_resp = self._nsx_get(detail_url, timeout=30)
-            detail_resp.raise_for_status()
-            return detail_resp.json()
+            if detail_resp.status_code == 200:
+                return detail_resp.json()
+            logger.warning(
+                "Failed to read group %s: HTTP %s", group_id, detail_resp.status_code
+            )
+            return None
         except requests.exceptions.RequestException as e:
             logger.warning("Failed to read group %s: %s", group_id, e)
             return None
+
+    def _group_list_row_matches_lookup_label(self, g: Dict[str, Any], key: str) -> bool:
+        """True if list/summary row g matches user-supplied label (id, display_name, path tail, extract name)."""
+        if not key:
+            return False
+        gid = str(g.get("id", "") or "")
+        if gid == key:
+            return True
+        disp = str(g.get("display_name", "") or "").strip()
+        if disp == key:
+            return True
+        path = str(g.get("path", "") or "")
+        if path:
+            tail = path.rstrip("/").split("/")[-1]
+            if tail == key:
+                return True
+        return self._extract_group_name(g) == key
+
+    def _find_group_summary_by_label_in_domain_list(self, label: str) -> Optional[Dict[str, Any]]:
+        """
+        Paginate GET .../groups (unfiltered) and return the first row whose id/display_name/path
+        matches ``label``. Used when GET .../groups/{label} returns 404 (display_name != policy id).
+        """
+        key = (label or "").strip()
+        if not key:
+            return None
+
+        groups_url = f"{self.base_url}/policy/api/v1/infra/domains/default/groups"
+        cursor: Optional[str] = None
+        page_size = 1000
+
+        try:
+            while True:
+                params: Dict[str, Any] = {"page_size": page_size}
+                if cursor:
+                    params["cursor"] = cursor
+
+                response = self._nsx_get(groups_url, params=params, timeout=60)
+                response.raise_for_status()
+                data = response.json()
+                for g in data.get("results") or []:
+                    if isinstance(g, dict) and self._group_list_row_matches_lookup_label(g, key):
+                        return g
+
+                cursor = data.get("cursor")
+                if not cursor:
+                    break
+                time.sleep(0.05)
+        except requests.exceptions.RequestException as e:
+            logger.warning("Group list scan for label %r failed: %s", key, e)
+            return None
+
+        return None
 
     def _resolve_group_detail_for_lookup_name(self, raw_name: str) -> Optional[Dict[str, Any]]:
         """
@@ -497,12 +567,42 @@ class NSXTClient:
                         return self._register_group_detail(full)
                 return g
 
-        d = self._fetch_group_detail_by_id(key)
-        if d:
-            return self._register_group_detail(d)
-        return None
+        enc = quote(str(key).strip(), safe="")
+        detail_url = f"{self.base_url}/policy/api/v1/infra/domains/default/groups/{enc}"
+        try:
+            detail_resp = self._nsx_get(detail_url, timeout=30)
+            if detail_resp.status_code == 200:
+                return self._register_group_detail(detail_resp.json())
+            not_found = detail_resp.status_code == 404
+            if not not_found:
+                logger.warning(
+                    "Failed to read group %s: HTTP %s", key, detail_resp.status_code
+                )
+                return None
+        except requests.exceptions.RequestException as e:
+            logger.warning("Failed to read group %s: %s", key, e)
+            return None
 
-    def _lookup_all_ip_groups_for_named_candidates(self, ip_address: str, names: List[str]) -> List[str]:
+        summary = self._find_group_summary_by_label_in_domain_list(key)
+        if not summary:
+            return None
+        real_id = str(summary.get("id", "") or "").strip()
+        if not real_id or real_id == key:
+            return summary
+        full = self._fetch_group_detail_by_id(real_id)
+        if full:
+            if not full.get("path") and summary.get("path"):
+                full["path"] = summary.get("path", "")
+            return self._register_group_detail(full)
+        return summary
+
+    def _lookup_all_ip_groups_for_named_candidates(
+        self,
+        ip_address: str,
+        names: List[str],
+        *,
+        allow_nested: bool = True,
+    ) -> List[str]:
         """Membership check only for the given group names/ids (no full domain list)."""
         ordered_unique: List[str] = []
         seen = set()
@@ -520,7 +620,7 @@ class NSXTClient:
 
         matched_details: List[Dict[str, Any]] = []
         for detail in by_id.values():
-            if self._ip_matches_group(ip_address, detail):
+            if self._ip_matches_group(ip_address, detail, allow_nested=allow_nested):
                 matched_details.append(detail)
 
         matching: List[Tuple[str, int]] = []
@@ -623,10 +723,12 @@ class NSXTClient:
         ip_address: str,
         refresh: bool = False,
         only_group_names: Optional[List[str]] = None,
+        *,
+        direct_membership_only: bool = False,
     ) -> List[str]:
         """
         Lookup all NSX groups that contain the given IP address.
-        Includes matches through nested groups and returns a stable order.
+        Includes matches through nested groups by default; returns a stable order.
 
         Args:
             ip_address: IP address to lookup
@@ -637,23 +739,30 @@ class NSXTClient:
             only_group_names: If non-empty, skip full catalog load and only evaluate
                 these groups (by id, display_name, or path tail). Intended for UI
                 refresh with explicit candidate groups.
+            direct_membership_only: If True, do not recurse into nested groups;
+                only direct criteria on each group (expression IPs, static fields,
+                members/ip-addresses). Used for UI \"refresh groups\".
 
         Returns:
             Sorted list of unique group names (smallest groups first).
         """
+        allow_nested = not direct_membership_only
+
         filtered = [x.strip() for x in (only_group_names or []) if x and str(x).strip()]
         if filtered:
             cache_key = self._get_cache_key(ip_address)
             self._ip_cache.pop(cache_key, None)
             self._cache_timestamps.pop(cache_key, None)
-            return self._lookup_all_ip_groups_for_named_candidates(ip_address, filtered)
+            return self._lookup_all_ip_groups_for_named_candidates(
+                ip_address, filtered, allow_nested=allow_nested
+            )
 
         if refresh:
             self._reload_catalog_from_group_list_only()
         else:
             self._refresh_groups_if_needed(force=False)
 
-        matched_details = self._collect_groups_matching_ip(ip_address)
+        matched_details = self._collect_groups_matching_ip(ip_address, allow_nested=allow_nested)
 
         matching: List[Tuple[str, int]] = []
         for group_detail in matched_details:
@@ -817,15 +926,23 @@ class NSXTClient:
         
         return ""
     
-    def _ip_matches_group(self, ip: str, group_detail: dict, visited: Optional[set] = None) -> bool:
+    def _ip_matches_group(
+        self,
+        ip: str,
+        group_detail: dict,
+        visited: Optional[set] = None,
+        *,
+        allow_nested: bool = True,
+    ) -> bool:
         """
         Check if an IP address matches a group's membership criteria.
-        Recursively checks nested groups.
+        Optionally recurses into nested groups (NSX group expressions).
         
         Args:
             ip: IP address to check
             group_detail: Group detail dictionary from NSX-T API
             visited: Set of group paths/IDs already visited (to prevent infinite loops)
+            allow_nested: If False, skip nested-group recursion (direct membership only).
             
         Returns:
             True if IP matches group membership
@@ -851,10 +968,12 @@ class NSXTClient:
                 if isinstance(expr, dict):
                     if self._ip_matches_expression(ip, expr):
                         return True
-                    if self._expression_has_nested_groups(expr):
+                    if allow_nested and self._expression_has_nested_groups(expr):
                         nested_groups = self._extract_nested_groups_from_expression(expr)
                         for nested_group in nested_groups:
-                            if self._ip_matches_group(ip, nested_group, visited):
+                            if self._ip_matches_group(
+                                ip, nested_group, visited, allow_nested=allow_nested
+                            ):
                                 return True
 
         # Check IP address sets (direct IP addresses)

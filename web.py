@@ -203,7 +203,7 @@ def create_inner_app() -> FastAPI:
         dest_ip: str = Query("", description="Exact destination IP to resolve NSX groups for"),
         refresh: bool = Query(
             False,
-            description="If true, reload group metadata from NSX (paginated list only) and re-resolve IPs",
+            description="If true, reload group metadata from NSX and re-resolve IPs; nested groups are not expanded (direct membership only)",
         ),
         only_group: List[str] = Query(
             default=[],
@@ -220,24 +220,39 @@ def create_inner_app() -> FastAPI:
 
         names = [x.strip() for x in (only_group or []) if x and str(x).strip()]
         targeted = bool(refresh) and bool(names)
+        direct_only = bool(refresh)
 
         if targeted:
             if source_ip:
                 out["source_groups"] = nsxt.lookup_all_ip_groups(
-                    source_ip, refresh=False, only_group_names=names
+                    source_ip,
+                    refresh=False,
+                    only_group_names=names,
+                    direct_membership_only=direct_only,
                 )
             if destination_ip:
                 out["dest_groups"] = nsxt.lookup_all_ip_groups(
-                    destination_ip, refresh=False, only_group_names=names
+                    destination_ip,
+                    refresh=False,
+                    only_group_names=names,
+                    direct_membership_only=direct_only,
                 )
             return JSONResponse(out)
 
         force_catalog = refresh
         if source_ip:
-            out["source_groups"] = nsxt.lookup_all_ip_groups(source_ip, refresh=force_catalog)
+            out["source_groups"] = nsxt.lookup_all_ip_groups(
+                source_ip,
+                refresh=force_catalog,
+                direct_membership_only=direct_only,
+            )
             force_catalog = False
         if destination_ip:
-            out["dest_groups"] = nsxt.lookup_all_ip_groups(destination_ip, refresh=force_catalog)
+            out["dest_groups"] = nsxt.lookup_all_ip_groups(
+                destination_ip,
+                refresh=force_catalog,
+                direct_membership_only=direct_only,
+            )
 
         return JSONResponse(out)
 

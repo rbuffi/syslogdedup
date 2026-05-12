@@ -160,5 +160,76 @@ class TestLookupOnlyNamedGroups(unittest.TestCase):
         self.assertEqual(out, [])
 
 
+class TestResolveDisplayNameAfter404(unittest.TestCase):
+    def test_list_scan_then_fetch_by_uuid(self):
+        cfg = NSXTConfig(host="h.example", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg)
+        uuid = "557e7c40-afa9-4b7c-8b12-2d0711bf5d8f"
+        display = "SZ-TZW-EXT-HST-111"
+        full_detail = {
+            "id": uuid,
+            "display_name": display,
+            "path": f"/infra/domains/default/groups/{uuid}",
+            "expression": [{"resource_type": "IPAddressExpression", "ip_addresses": ["10.1.1.1"]}],
+        }
+
+        def fake_nsx_get(self, url, params=None, *, timeout=30):
+            r = MagicMock()
+            if params and params.get("page_size") is not None:
+                r.status_code = 200
+                r.json.return_value = {
+                    "results": [
+                        {
+                            "id": uuid,
+                            "display_name": display,
+                            "path": f"/infra/domains/default/groups/{uuid}",
+                        }
+                    ],
+                    "cursor": None,
+                }
+                return r
+            if f"/groups/{uuid}" in url or url.endswith("/groups/" + uuid):
+                r.status_code = 200
+                r.json.return_value = full_detail
+                return r
+            r.status_code = 404
+            return r
+
+        with patch.object(NSXTClient, "_nsx_get", fake_nsx_get):
+            out = client._resolve_group_detail_for_lookup_name(display)
+
+        self.assertIsNotNone(out)
+        self.assertEqual(out.get("id"), uuid)
+        self.assertEqual(out.get("display_name"), display)
+
+
+class TestDirectMembershipOnly(unittest.TestCase):
+    def test_allow_nested_false_skips_nested_expressions(self):
+        cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg)
+        nested = {
+            "id": "child",
+            "expression": [{"resource_type": "IPAddressExpression", "ip_addresses": ["10.1.1.1"]}],
+        }
+        parent = {
+            "id": "parent",
+            "path": "/infra/domains/default/groups/parent",
+            "expression": [{"resource_type": "NestedExpression", "paths": []}],
+        }
+        with patch.object(NSXTClient, "_expression_has_nested_groups", return_value=True):
+            with patch.object(
+                NSXTClient, "_extract_nested_groups_from_expression", return_value=[nested]
+            ):
+                with patch.object(
+                    NSXTClient, "_group_ip_matches_members_paginated_scan", return_value=False
+                ):
+                    self.assertFalse(
+                        client._ip_matches_group("10.1.1.1", parent, allow_nested=False)
+                    )
+                    self.assertTrue(
+                        client._ip_matches_group("10.1.1.1", parent, allow_nested=True)
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
