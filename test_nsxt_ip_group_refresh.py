@@ -203,6 +203,164 @@ class TestResolveDisplayNameAfter404(unittest.TestCase):
         self.assertEqual(out.get("display_name"), display)
 
 
+class TestIngestGroupLookup(unittest.TestCase):
+    def test_lookup_ingest_uses_cached_ip_members_no_live_scan(self):
+        cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg, ingest_mode=True)
+        client._groups = [
+            {
+                "id": "g1",
+                "display_name": "CachedG",
+                "path": "/infra/domains/default/groups/g1",
+                "member_count": 1,
+                "ip_members": ["10.2.2.2"],
+            }
+        ]
+
+        with patch.object(NSXTClient, "_nsx_get") as nsx_get:
+            with patch.object(NSXTClient, "_group_ip_matches_members_paginated_scan") as scan:
+                with patch.object(NSXTClient, "_refresh_groups_if_needed") as refresh:
+                    primary, all_groups = client.lookup_ingest_ip_groups("10.2.2.2")
+
+        refresh.assert_not_called()
+        nsx_get.assert_not_called()
+        scan.assert_not_called()
+        self.assertEqual(primary, ["CachedG"])
+        self.assertEqual(all_groups, ["CachedG"])
+
+    def test_lookup_ingest_does_not_call_refresh_on_second_hit(self):
+        cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg, ingest_mode=True)
+        client._groups = [
+            {
+                "id": "g1",
+                "display_name": "G",
+                "path": "/infra/domains/default/groups/g1",
+                "member_count": 1,
+                "expression": [{"resource_type": "IPAddressExpression", "ip_addresses": ["10.3.3.3"]}],
+            }
+        ]
+
+        with patch.object(NSXTClient, "_refresh_groups_if_needed") as refresh:
+            client.lookup_ingest_ip_groups("10.3.3.3")
+            client.lookup_ingest_ip_groups("10.3.3.3")
+        refresh.assert_not_called()
+
+    def test_live_mode_uses_paginated_scan_without_cached_members(self):
+        cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg, ingest_mode=False)
+        g = {
+            "id": "g1",
+            "path": "/infra/domains/default/groups/g1",
+            "expression": [],
+        }
+        with patch.object(NSXTClient, "_group_ip_matches_members_paginated_scan", return_value=True) as scan:
+            self.assertTrue(client._ip_matches_group("10.4.4.4", g, membership_lookup="live"))
+        scan.assert_called_once()
+
+    def test_cache_mode_skips_paginated_scan_without_ip_members(self):
+        cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg, ingest_mode=True)
+        g = {
+            "id": "g1",
+            "path": "/infra/domains/default/groups/g1",
+            "expression": [],
+        }
+        with patch.object(NSXTClient, "_group_ip_matches_members_paginated_scan") as scan:
+            self.assertFalse(client._ip_matches_group("10.4.4.4", g, membership_lookup="cache"))
+        scan.assert_not_called()
+
+    def test_refresh_ingest_catalog_clears_ingest_ip_cache(self):
+        cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False, cache_ttl=3600)
+        client = NSXTClient(cfg, ingest_mode=True)
+        client._groups = [
+            {
+                "id": "g1",
+                "display_name": "G",
+                "path": "/infra/domains/default/groups/g1",
+                "member_count": 1,
+                "expression": [{"resource_type": "IPAddressExpression", "ip_addresses": ["10.5.5.5"]}],
+            }
+        ]
+        client.lookup_ingest_ip_groups("10.5.5.5")
+        self.assertIn("10.5.5.5", client._ingest_ip_cache)
+
+        client._groups_last_refresh = 100.0
+        with patch.object(NSXTClient, "_refresh_groups_if_needed") as refresh:
+            def bump_refresh(*_a, **_k):
+                client._groups_last_refresh = 200.0
+
+            refresh.side_effect = bump_refresh
+            client.refresh_ingest_catalog(force=True)
+
+        self.assertNotIn("10.5.5.5", client._ingest_ip_cache)
+
+
+class TestIngestNestedCache(unittest.TestCase):
+    def test_ingest_nested_missing_child_does_not_fetch_from_nsx(self):
+        cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg, ingest_mode=True)
+        missing_id = "17258e14-2fc2-4648-bb0c-aeb316303673"
+        client._groups = [
+            {
+                "id": "parent",
+                "display_name": "ParentG",
+                "path": "/infra/domains/default/groups/parent",
+                "member_count": 999999,
+                "expression": [
+                    {
+                        "resource_type": "NestedExpression",
+                        "paths": [f"/infra/domains/default/groups/{missing_id}"],
+                    }
+                ],
+            }
+        ]
+        client._rebuild_group_maps()
+
+        with patch.object(NSXTClient, "_fetch_group_detail_by_id") as fetch:
+            with patch.object(NSXTClient, "_nsx_get") as nsx_get:
+                primary, all_groups = client.lookup_ingest_ip_groups("10.8.8.8")
+
+        fetch.assert_not_called()
+        nsx_get.assert_not_called()
+        self.assertIsNone(primary)
+        self.assertIsNone(all_groups)
+
+    def test_ingest_nested_child_in_catalog_matches_without_http(self):
+        cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg, ingest_mode=True)
+        child = {
+            "id": "child1",
+            "display_name": "ChildG",
+            "path": "/infra/domains/default/groups/child1",
+            "member_count": 1,
+            "ip_members": ["10.9.9.9"],
+        }
+        parent = {
+            "id": "parent",
+            "display_name": "ParentG",
+            "path": "/infra/domains/default/groups/parent",
+            "member_count": 999999,
+            "expression": [
+                {
+                    "resource_type": "NestedExpression",
+                    "paths": [child["path"]],
+                }
+            ],
+        }
+        client._groups = [parent, child]
+        client._rebuild_group_maps()
+
+        with patch.object(NSXTClient, "_fetch_group_detail_by_id") as fetch:
+            with patch.object(NSXTClient, "_nsx_get") as nsx_get:
+                primary, all_groups = client.lookup_ingest_ip_groups("10.9.9.9")
+
+        fetch.assert_not_called()
+        nsx_get.assert_not_called()
+        self.assertEqual(primary, ["ChildG"])
+        self.assertIn("ChildG", all_groups or [])
+
+
 class TestDirectMembershipOnly(unittest.TestCase):
     def test_allow_nested_false_skips_nested_expressions(self):
         cfg = NSXTConfig(host="h", username="u", password="p", verify_ssl=False)

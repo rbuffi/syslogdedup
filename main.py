@@ -5,6 +5,7 @@ import signal
 import socket
 import struct
 import sys
+import threading
 from typing import List, Optional, Tuple
 from config import load_config, Config
 from parser import LogParser
@@ -49,7 +50,15 @@ class SyslogServer:
         self.config = config
         self.parser = LogParser()
         self.deduplicator = Deduplicator()
-        self.nsxt_client = NSXTClient(config.nsxt)
+        self.nsxt_client = NSXTClient(config.nsxt, ingest_mode=True)
+        self.nsxt_client.refresh_ingest_catalog(force=True)
+        self._ingest_catalog_refresh_stop = threading.Event()
+        self._ingest_catalog_refresh_thread = threading.Thread(
+            target=self._ingest_catalog_refresh_loop,
+            name="nsx-ingest-catalog-refresh",
+            daemon=True,
+        )
+        self._ingest_catalog_refresh_thread.start()
         self.forwarder: Optional[SyslogForwarder] = None
         if config.syslog.forward_enabled:
             self.forwarder = SyslogForwarder(config.syslog)
@@ -70,7 +79,17 @@ class SyslogServer:
             'dropped': 0,
         }
         self._last_kernel_drop_total: Optional[int] = None
-    
+
+    def _ingest_catalog_refresh_loop(self) -> None:
+        """Refresh NSX group catalog on a fixed interval (default: cache_ttl, typically 1 hour)."""
+        interval = max(1, int(self.config.nsxt.cache_ttl))
+        while not self._ingest_catalog_refresh_stop.wait(interval):
+            try:
+                self.nsxt_client.refresh_ingest_catalog(force=True)
+                logger.info("NSX ingest group catalog refreshed (scheduled)")
+            except Exception as e:
+                logger.warning("Scheduled NSX ingest catalog refresh failed: %s", e)
+
     def _setup_socket(self):
         """Create and bind UDP socket."""
         try:
@@ -102,28 +121,7 @@ class SyslogServer:
         - primary_groups: least-effective match(es) for forwarder/influx compatibility
         - all_groups: all matching groups for DB persistence
         """
-        primary_groups = self.nsxt_client.lookup_ip_groups(ip_address)
-        if primary_groups is not None and len(primary_groups) == 0:
-            primary_groups = None
-
-        # Keep "all groups" resolution in main.py (ingest path), not nsxt_client.
-        self.nsxt_client._refresh_groups_if_needed()
-        matching: List[Tuple[str, int]] = []
-        for group_detail in self.nsxt_client._groups:
-            if self.nsxt_client._ip_matches_group(ip_address, group_detail):
-                name = self.nsxt_client._extract_group_name(group_detail)
-                if name:
-                    matching.append((name, int(group_detail.get("member_count", 999999))))
-
-        if not matching:
-            return primary_groups, None
-
-        best_count_by_name = {}
-        for name, count in matching:
-            if name not in best_count_by_name or count < best_count_by_name[name]:
-                best_count_by_name[name] = count
-        all_groups = [name for name, _count in sorted(best_count_by_name.items(), key=lambda nc: (nc[1], nc[0]))]
-        return primary_groups, (all_groups or None)
+        return self.nsxt_client.lookup_ingest_ip_groups(ip_address)
     
     def _process_log(self, parsed_part: str, raw_line: str):
         """
@@ -278,6 +276,8 @@ class SyslogServer:
         """Shutdown the server gracefully."""
         logger.info("Shutting down syslog server...")
         self.running = False
+        if hasattr(self, "_ingest_catalog_refresh_stop"):
+            self._ingest_catalog_refresh_stop.set()
         
         if self.socket:
             try:

@@ -357,6 +357,10 @@
       <input id="portFilter" type="text" placeholder="e.g. 443" />
     </label>
     <label>
+      Rule ID
+      <input id="ruleIdFilter" type="text" placeholder="e.g. 12345" />
+    </label>
+    <label>
       Protocol
       <div id="protocolDropdown" class="protocol-dropdown">
         <button type="button" id="protocolDropdownBtn" class="protocol-dropdown-btn">TCP, UDP</button>
@@ -386,6 +390,10 @@
     <label>
       Exclude ports
       <input id="excludePortFilter" type="text" placeholder="e.g. 443, 8080" />
+    </label>
+    <label>
+      Exclude rule IDs
+      <input id="excludeRuleIdFilter" type="text" placeholder="e.g. 1001, 1002" />
     </label>
     <label>
       Exclude src IP
@@ -486,7 +494,9 @@
     const srcIpFilter = document.getElementById('srcIpFilter');
     const destIpFilter = document.getElementById('destIpFilter');
     const portFilter = document.getElementById('portFilter');
+    const ruleIdFilter = document.getElementById('ruleIdFilter');
     const excludePortFilter = document.getElementById('excludePortFilter');
+    const excludeRuleIdFilter = document.getElementById('excludeRuleIdFilter');
     const excludeSrcIpFilter = document.getElementById('excludeSrcIpFilter');
     const excludeDestIpFilter = document.getElementById('excludeDestIpFilter');
     const protocolDropdown = document.getElementById('protocolDropdown');
@@ -762,9 +772,11 @@
 
     function appendExcludeParams(params) {
       const exPort = (excludePortFilter && excludePortFilter.value || '').trim();
+      const exRuleId = (excludeRuleIdFilter && excludeRuleIdFilter.value || '').trim();
       const exSrc = (excludeSrcIpFilter && excludeSrcIpFilter.value || '').trim();
       const exDest = (excludeDestIpFilter && excludeDestIpFilter.value || '').trim();
       if (exPort) params.set('exclude_dest_port', exPort);
+      if (exRuleId) params.set('exclude_rule_id', exRuleId);
       if (exSrc) params.set('exclude_src_ip', exSrc);
       if (exDest) params.set('exclude_dest_ip', exDest);
     }
@@ -810,11 +822,12 @@
       const srcIp = srcIpFilter.value.trim();
       const destIp = destIpFilter.value.trim();
       const port = portFilter.value.trim();
+      const ruleId = ruleIdFilter.value.trim();
       const protocolsParam = buildProtocolsParam();
       const result = getSelectedResult();
       // Require at least some filter to avoid huge unbounded queries
-      if (!sourceGroup && !destGroup && hours === 0 && !srcIp && !destIp && !port && !protocolsParam && !result) {
-        tableWrap.innerHTML = '<p class="hint">Select a group, IP, port, or time window, then adjust filters to load data.</p>';
+      if (!sourceGroup && !destGroup && hours === 0 && !srcIp && !destIp && !port && !ruleId && !protocolsParam && !result) {
+        tableWrap.innerHTML = '<p class="hint">Select a group, IP, port, rule ID, or time window, then adjust filters to load data.</p>';
         detailsWrap.innerHTML = '';
         return;
       }
@@ -829,6 +842,7 @@
         if (srcIp) params.set('src_ip', srcIp);
         if (destIp) params.set('dest_ip', destIp);
         if (port) params.set('dest_port', port);
+        if (ruleId) params.set('rule_id', ruleId);
         if (protocolsParam) params.set('protocols', protocolsParam);
         if (result) params.set('result', result);
         appendExcludeParams(params);
@@ -1205,6 +1219,7 @@
       const srcIp = srcIpFilter.value.trim();
       const destIp = destIpFilter.value.trim();
       const port = portFilter.value.trim();
+      const ruleId = ruleIdFilter.value.trim();
       const protocolsParam = buildProtocolsParam();
       const result = getSelectedResult();
       showLoading(true);
@@ -1217,6 +1232,7 @@
         if (srcIp) params.set('src_ip', srcIp);
         if (destIp) params.set('dest_ip', destIp);
         if (port) params.set('dest_port', port);
+        if (ruleId) params.set('rule_id', ruleId);
         if (protocolsParam) params.set('protocols', protocolsParam);
         if (result) params.set('result', result);
         appendExcludeParams(params);
@@ -1389,7 +1405,9 @@
       await loadRules();
     });
     portFilter.addEventListener('change', loadRules);
+    ruleIdFilter.addEventListener('change', loadRules);
     if (excludePortFilter) excludePortFilter.addEventListener('change', loadRules);
+    if (excludeRuleIdFilter) excludeRuleIdFilter.addEventListener('change', loadRules);
     if (excludeSrcIpFilter) excludeSrcIpFilter.addEventListener('change', loadRules);
     if (excludeDestIpFilter) excludeDestIpFilter.addEventListener('change', loadRules);
     protocolDropdownBtn.addEventListener('click', (e) => {

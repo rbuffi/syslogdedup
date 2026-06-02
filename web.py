@@ -114,11 +114,13 @@ def create_inner_app() -> FastAPI:
         src_ip: str = Query("", description="Filter by source IP (substring match)"),
         dest_ip: str = Query("", description="Filter by dest IP (substring match)"),
         dest_port: str = Query("", description="Filter by destination port (text)"),
+        rule_id: str = Query("", description="Filter by rule_id (exact)"),
         protocols: str = Query("", description="Comma-separated protocol filter (e.g. TCP,UDP,FIN,RST)"),
         result: str = Query("", description="Filter by result (pass/drop)"),
         exclude_src_ip: str = Query("", description="Comma-separated src IP substrings to exclude"),
         exclude_dest_ip: str = Query("", description="Comma-separated dest IP substrings to exclude"),
         exclude_dest_port: str = Query("", description="Comma-separated dest ports to exclude (exact)"),
+        exclude_rule_id: str = Query("", description="Comma-separated rule_ids to exclude (exact)"),
     ):
         """Flat list of rules; optional filter by source_group, dest_group."""
         return pg.get_rules(
@@ -128,11 +130,13 @@ def create_inner_app() -> FastAPI:
             src_ip=src_ip or None,
             dest_ip=dest_ip or None,
             dest_port=dest_port or None,
+            rule_id=rule_id or None,
             protocols=parse_protocols_csv(protocols),
             result=parse_result(result),
             exclude_src_ip=parse_exclude_csv(exclude_src_ip),
             exclude_dest_ip=parse_exclude_csv(exclude_dest_ip),
             exclude_dest_port=parse_exclude_csv(exclude_dest_port),
+            exclude_rule_id=parse_exclude_csv(exclude_rule_id),
         )
 
     @inner.get("/api/rules/grouped")
@@ -143,11 +147,13 @@ def create_inner_app() -> FastAPI:
         src_ip: str = Query("", description="Filter by source IP (substring match)"),
         dest_ip: str = Query("", description="Filter by dest IP (substring match)"),
         dest_port: str = Query("", description="Filter by destination port (text)"),
+        rule_id: str = Query("", description="Filter by rule_id (exact)"),
         protocols: str = Query("", description="Comma-separated protocol filter (e.g. TCP,UDP,FIN,RST)"),
         result: str = Query("", description="Filter by result (pass/drop)"),
         exclude_src_ip: str = Query("", description="Comma-separated src IP substrings to exclude"),
         exclude_dest_ip: str = Query("", description="Comma-separated dest IP substrings to exclude"),
         exclude_dest_port: str = Query("", description="Comma-separated dest ports to exclude (exact)"),
+        exclude_rule_id: str = Query("", description="Comma-separated rule_ids to exclude (exact)"),
     ):
         """Rules grouped by (source_group, dest_group) with aggregated dest_ports."""
         return pg.get_rules_grouped(
@@ -157,11 +163,13 @@ def create_inner_app() -> FastAPI:
             src_ip=src_ip or None,
             dest_ip=dest_ip or None,
             dest_port=dest_port or None,
+            rule_id=rule_id or None,
             protocols=parse_protocols_csv(protocols),
             result=parse_result(result),
             exclude_src_ip=parse_exclude_csv(exclude_src_ip),
             exclude_dest_ip=parse_exclude_csv(exclude_dest_ip),
             exclude_dest_port=parse_exclude_csv(exclude_dest_port),
+            exclude_rule_id=parse_exclude_csv(exclude_rule_id),
         )
 
     @inner.get("/api/protocols")
@@ -221,6 +229,12 @@ def create_inner_app() -> FastAPI:
         names = [x.strip() for x in (only_group or []) if x and str(x).strip()]
         targeted = bool(refresh) and bool(names)
         direct_only = bool(refresh)
+
+        if not refresh and not targeted and (source_ip or destination_ip):
+            raise HTTPException(
+                status_code=400,
+                detail="NSX group resolution requires refresh=true (use Ververs groepen in the UI)",
+            )
 
         if targeted:
             if source_ip:

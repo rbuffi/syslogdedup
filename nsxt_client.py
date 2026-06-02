@@ -5,7 +5,9 @@ import threading
 import time
 from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Literal, Optional, Dict, List, Any, Tuple
+
+MembershipLookup = Literal["cache", "live"]
 
 import requests
 from requests.auth import HTTPBasicAuth
@@ -22,13 +24,15 @@ CREATED_BY_TOOL_LABEL_TAG = "Regel aangemaakt door NSX microsegmentatie tool"
 class NSXTClient:
     """Client for NSX-T Manager API to lookup IP addresses in groups."""
     
-    def __init__(self, config: NSXTConfig):
+    def __init__(self, config: NSXTConfig, *, ingest_mode: bool = False):
         """
         Initialize NSX-T client.
         
         Args:
             config: NSXTConfig object with connection details
+            ingest_mode: If True, syslog ingest uses bulk-cached groups only (no per-IP NSX refresh).
         """
+        self.ingest_mode = ingest_mode
         self.config = config
         self.base_url = f"https://{config.host}"
         self.auth = HTTPBasicAuth(config.username, config.password)
@@ -36,9 +40,13 @@ class NSXTClient:
         self.session.auth = self.auth
         self.session.verify = config.verify_ssl
         
-        # Per-IP cache for results
+        # Per-IP cache for results (UI / lookup_ip_groups)
         self._ip_cache: Dict[str, Optional[List[str]]] = {}
         self._cache_timestamps: Dict[str, float] = {}
+
+        # Per-IP cache for syslog ingest (primary_groups, all_groups)
+        self._ingest_ip_cache: Dict[str, Tuple[Optional[List[str]], Optional[List[str]]]] = {}
+        self._ingest_cache_timestamps: Dict[str, float] = {}
 
         # Prefetched groups data (for batch/local lookup)
         self._groups_last_refresh: float = 0.0
@@ -93,6 +101,83 @@ class NSXTClient:
         cache_key = self._get_cache_key(ip)
         self._ip_cache[cache_key] = groups
         self._cache_timestamps[cache_key] = time.time()
+
+    def _is_ingest_cache_valid(self, cache_key: str) -> bool:
+        if cache_key not in self._ingest_cache_timestamps:
+            return False
+        age = time.time() - self._ingest_cache_timestamps[cache_key]
+        return age < self.config.cache_ttl
+
+    def _get_from_ingest_cache(
+        self, ip: str
+    ) -> Optional[Tuple[Optional[List[str]], Optional[List[str]]]]:
+        cache_key = self._get_cache_key(ip)
+        if self._is_ingest_cache_valid(cache_key):
+            return self._ingest_ip_cache.get(cache_key)
+        return None
+
+    def _store_in_ingest_cache(
+        self,
+        ip: str,
+        result: Tuple[Optional[List[str]], Optional[List[str]]],
+    ) -> None:
+        cache_key = self._get_cache_key(ip)
+        self._ingest_ip_cache[cache_key] = result
+        self._ingest_cache_timestamps[cache_key] = time.time()
+
+    def _clear_ingest_ip_cache(self) -> None:
+        self._ingest_ip_cache.clear()
+        self._ingest_cache_timestamps.clear()
+
+    def refresh_ingest_catalog(self, force: bool = False) -> None:
+        """
+        Reload the in-memory group catalog from NSX (detail + all IP members).
+        Intended for syslog: call at startup and on a fixed interval, not per log line.
+        """
+        before = self._groups_last_refresh
+        self._refresh_groups_if_needed(force=force)
+        if self._groups_last_refresh > before or (force and self._groups):
+            self._clear_ingest_ip_cache()
+
+    def lookup_ingest_ip_groups(
+        self, ip_address: str
+    ) -> Tuple[Optional[List[str]], Optional[List[str]]]:
+        """
+        Resolve primary (smallest) and all matching group names using only the
+        in-memory catalog. Does not contact NSX; catalog must be refreshed separately.
+        """
+        cached = self._get_from_ingest_cache(ip_address)
+        if cached is not None:
+            return cached
+
+        matching: List[Tuple[str, int]] = []
+        for group_detail in self._groups:
+            if self._ip_matches_group(
+                ip_address, group_detail, membership_lookup="cache"
+            ):
+                name = self._extract_group_name(group_detail)
+                if name:
+                    matching.append((name, int(group_detail.get("member_count", 999999))))
+
+        if not matching:
+            result: Tuple[Optional[List[str]], Optional[List[str]]] = (None, None)
+            self._store_in_ingest_cache(ip_address, result)
+            return result
+
+        best_count_by_name: Dict[str, int] = {}
+        for name, count in matching:
+            if name not in best_count_by_name or count < best_count_by_name[name]:
+                best_count_by_name[name] = count
+        all_groups = [
+            name
+            for name, _count in sorted(best_count_by_name.items(), key=lambda nc: (nc[1], nc[0]))
+        ]
+
+        min_count = min(count for _, count in matching)
+        primary = sorted({name for name, count in matching if count == min_count})
+        result = (primary or None, all_groups or None)
+        self._store_in_ingest_cache(ip_address, result)
+        return result
 
     # -------- Batch / precomputed group loading --------
 
@@ -150,6 +235,12 @@ class NSXTClient:
                     )
                     try:
                         detail_resp = self._nsx_get(detail_url, timeout=15)
+                        if detail_resp.status_code == 404:
+                            logger.debug(
+                                "Skipping group %s during catalog refresh: HTTP 404",
+                                group_id,
+                            )
+                            continue
                         detail_resp.raise_for_status()
                         detail = detail_resp.json()
                         detail["path"] = group_path  # ensure path is present
@@ -478,6 +569,11 @@ class NSXTClient:
             detail_resp = self._nsx_get(detail_url, timeout=30)
             if detail_resp.status_code == 200:
                 return detail_resp.json()
+            if detail_resp.status_code == 404:
+                logger.debug(
+                    "Failed to read group %s: HTTP 404", group_id
+                )
+                return None
             logger.warning(
                 "Failed to read group %s: HTTP %s", group_id, detail_resp.status_code
             )
@@ -664,8 +760,13 @@ class NSXTClient:
             self._groups_by_id[gid] = detail
             return detail
 
-    def _resolve_group_path_or_id(self, path_or_id: str) -> Optional[Dict[str, Any]]:
-        """Return group detail from cache, else fetch by id and register."""
+    def _resolve_group_path_or_id(
+        self,
+        path_or_id: str,
+        *,
+        membership_lookup: MembershipLookup = "live",
+    ) -> Optional[Dict[str, Any]]:
+        """Return group detail from catalog; live mode may fetch from NSX on cache miss."""
         if not path_or_id:
             return None
         nested = self._groups_by_path.get(path_or_id) or self._groups_by_id.get(path_or_id)
@@ -673,6 +774,17 @@ class NSXTClient:
             return nested
 
         gid = self._group_id_from_path_or_id(path_or_id)
+        if gid:
+            nested = self._groups_by_id.get(gid)
+            if nested is not None:
+                return nested
+            for path, g in self._groups_by_path.items():
+                if path.rstrip("/").split("/")[-1] == gid:
+                    return g
+
+        if membership_lookup == "cache":
+            return None
+
         detail = self._fetch_group_detail_by_id(gid)
         if not detail:
             return None
@@ -759,8 +871,6 @@ class NSXTClient:
 
         if refresh:
             self._reload_catalog_from_group_list_only()
-        else:
-            self._refresh_groups_if_needed(force=False)
 
         matched_details = self._collect_groups_matching_ip(ip_address, allow_nested=allow_nested)
 
@@ -933,6 +1043,7 @@ class NSXTClient:
         visited: Optional[set] = None,
         *,
         allow_nested: bool = True,
+        membership_lookup: MembershipLookup = "live",
     ) -> bool:
         """
         Check if an IP address matches a group's membership criteria.
@@ -943,6 +1054,8 @@ class NSXTClient:
             group_detail: Group detail dictionary from NSX-T API
             visited: Set of group paths/IDs already visited (to prevent infinite loops)
             allow_nested: If False, skip nested-group recursion (direct membership only).
+            membership_lookup: "cache" uses preloaded ip_members only (syslog ingest);
+                "live" may query NSX members/ip-addresses per group (UI).
             
         Returns:
             True if IP matches group membership
@@ -969,10 +1082,16 @@ class NSXTClient:
                     if self._ip_matches_expression(ip, expr):
                         return True
                     if allow_nested and self._expression_has_nested_groups(expr):
-                        nested_groups = self._extract_nested_groups_from_expression(expr)
+                        nested_groups = self._extract_nested_groups_from_expression(
+                            expr, membership_lookup=membership_lookup
+                        )
                         for nested_group in nested_groups:
                             if self._ip_matches_group(
-                                ip, nested_group, visited, allow_nested=allow_nested
+                                ip,
+                                nested_group,
+                                visited,
+                                allow_nested=allow_nested,
+                                membership_lookup=membership_lookup,
                             ):
                                 return True
 
@@ -987,6 +1106,14 @@ class NSXTClient:
             for ip_range in ip_ranges:
                 if isinstance(ip_range, str) and self._ip_in_range(ip, ip_range):
                     return True
+
+        if membership_lookup == "cache":
+            ip_members = group_detail.get("ip_members")
+            if isinstance(ip_members, list) and ip_members:
+                for elem in ip_members:
+                    if self._ip_matches_member_element(ip, elem):
+                        return True
+            return False
 
         if self._group_has_only_mac_expression_criteria(group_detail):
             return False
@@ -1023,7 +1150,12 @@ class NSXTClient:
             return True
         return False
     
-    def _extract_nested_groups_from_expression(self, expression: dict) -> List[Dict[str, Any]]:
+    def _extract_nested_groups_from_expression(
+        self,
+        expression: dict,
+        *,
+        membership_lookup: MembershipLookup = "live",
+    ) -> List[Dict[str, Any]]:
         """
         Extract nested group references from an expression and return their group details.
         
@@ -1039,13 +1171,17 @@ class NSXTClient:
         if not group_paths:
             group_paths = expression.get('groups', [])
         if not group_paths:
+            group_paths = expression.get('paths', [])
+        if not group_paths:
             # Sometimes it's a single path/id
             path = expression.get('path') or expression.get('group_path') or expression.get('id')
             if path:
                 group_paths = [path]
         
         for path_or_id in group_paths:
-            nested = self._resolve_group_path_or_id(path_or_id)
+            nested = self._resolve_group_path_or_id(
+                path_or_id, membership_lookup=membership_lookup
+            )
             if nested:
                 nested_groups.append(nested)
 

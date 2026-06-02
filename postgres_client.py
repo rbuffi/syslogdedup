@@ -388,11 +388,13 @@ class PostgresClient:
         src_ip: Optional[str] = None,
         dest_ip: Optional[str] = None,
         dest_port: Optional[str] = None,
+        rule_id: Optional[str] = None,
         protocols: Optional[List[str]] = None,
         result: Optional[str] = None,
         exclude_src_ip: Optional[List[str]] = None,
         exclude_dest_ip: Optional[List[str]] = None,
         exclude_dest_port: Optional[List[str]] = None,
+        exclude_rule_id: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Return flat list of rules with optional filter by source_group, dest_group."""
         if not self._ensure_conn():
@@ -404,11 +406,13 @@ class PostgresClient:
         src_ip = (src_ip or "").strip()
         dest_ip = (dest_ip or "").strip()
         dest_port = (dest_port or "").strip()
+        rule_id = (rule_id or "").strip()
         protocols_norm = self._normalize_protocols(protocols)
         result_norm = self._normalize_result(result)
         ex_src = self._normalize_exclude_tokens(exclude_src_ip)
         ex_dest = self._normalize_exclude_tokens(exclude_dest_ip)
         ex_port = self._normalize_exclude_tokens(exclude_dest_port)
+        ex_rule_id = self._normalize_exclude_tokens(exclude_rule_id)
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -435,12 +439,29 @@ class PostgresClient:
                         rule_name,
                         ts AS last_hit
                     FROM {t}
-                    WHERE (%s = '' OR COALESCE(NULLIF(src_group, ''), %s) = %s)
-                      AND (%s = '' OR COALESCE(NULLIF(dest_group, ''), %s) = %s)
+                    WHERE (
+                          %s = ''
+                          OR %s = ANY(
+                              COALESCE(
+                                  NULLIF(src_groups, ARRAY[]::TEXT[]),
+                                  ARRAY[COALESCE(NULLIF(src_group, ''), %s)]
+                              )
+                          )
+                      )
+                      AND (
+                          %s = ''
+                          OR %s = ANY(
+                              COALESCE(
+                                  NULLIF(dest_groups, ARRAY[]::TEXT[]),
+                                  ARRAY[COALESCE(NULLIF(dest_group, ''), %s)]
+                              )
+                          )
+                      )
                       AND (%s = 0 OR ts >= NOW() - make_interval(hours => %s))
                       AND (%s = '' OR src_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR dest_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR CAST(dest_port AS TEXT) = %s)
+                      AND (%s = '' OR COALESCE(rule_id, '') = %s)
                       AND (%s::TEXT[] IS NULL OR UPPER(COALESCE(protocol, '')) = ANY(%s::TEXT[]))
                       AND (%s = '' OR LOWER(COALESCE(result, '')) = %s)
                       AND NOT EXISTS (
@@ -455,6 +476,10 @@ class PostgresClient:
                           SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
                           WHERE TRIM(ex) <> '' AND CAST(dest_port AS TEXT) = TRIM(ex)
                       )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
+                          WHERE TRIM(ex) <> '' AND COALESCE(rule_id, '') = TRIM(ex)
+                      )
                     ORDER BY hit_count DESC, dest_port
                     LIMIT 500
                     """,
@@ -464,11 +489,11 @@ class PostgresClient:
                         NO_GROUP_VALUE,
                         NO_GROUP_VALUE,
                         source_group,
-                        NO_GROUP_VALUE,
                         source_group,
-                        dest_group,
                         NO_GROUP_VALUE,
                         dest_group,
+                        dest_group,
+                        NO_GROUP_VALUE,
                         hours,
                         hours,
                         src_ip,
@@ -477,6 +502,8 @@ class PostgresClient:
                         dest_ip,
                         dest_port,
                         dest_port,
+                        rule_id,
+                        rule_id,
                         protocols_norm if protocols_norm else None,
                         protocols_norm if protocols_norm else None,
                         result_norm,
@@ -484,6 +511,7 @@ class PostgresClient:
                         ex_src,
                         ex_dest,
                         ex_port,
+                        ex_rule_id,
                     ),
                 )
                 rows = cur.fetchall()
@@ -500,11 +528,13 @@ class PostgresClient:
         src_ip: Optional[str] = None,
         dest_ip: Optional[str] = None,
         dest_port: Optional[str] = None,
+        rule_id: Optional[str] = None,
         protocols: Optional[List[str]] = None,
         result: Optional[str] = None,
         exclude_src_ip: Optional[List[str]] = None,
         exclude_dest_ip: Optional[List[str]] = None,
         exclude_dest_port: Optional[List[str]] = None,
+        exclude_rule_id: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
         """Return rules grouped by (source_group, dest_group) with aggregated dest_ports."""
         if not self._ensure_conn():
@@ -516,11 +546,13 @@ class PostgresClient:
         src_ip = (src_ip or "").strip()
         dest_ip = (dest_ip or "").strip()
         dest_port = (dest_port or "").strip()
+        rule_id = (rule_id or "").strip()
         protocols_norm = self._normalize_protocols(protocols)
         result_norm = self._normalize_result(result)
         ex_src = self._normalize_exclude_tokens(exclude_src_ip)
         ex_dest = self._normalize_exclude_tokens(exclude_dest_ip)
         ex_port = self._normalize_exclude_tokens(exclude_dest_port)
+        ex_rule_id = self._normalize_exclude_tokens(exclude_rule_id)
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
@@ -535,12 +567,29 @@ class PostgresClient:
                         SUM(hit_count)::BIGINT AS hit_count,
                         MAX(ts) AS last_hit
                     FROM {t}
-                    WHERE (%s = '' OR COALESCE(NULLIF(src_group, ''), %s) = %s)
-                      AND (%s = '' OR COALESCE(NULLIF(dest_group, ''), %s) = %s)
+                    WHERE (
+                          %s = ''
+                          OR %s = ANY(
+                              COALESCE(
+                                  NULLIF(src_groups, ARRAY[]::TEXT[]),
+                                  ARRAY[COALESCE(NULLIF(src_group, ''), %s)]
+                              )
+                          )
+                      )
+                      AND (
+                          %s = ''
+                          OR %s = ANY(
+                              COALESCE(
+                                  NULLIF(dest_groups, ARRAY[]::TEXT[]),
+                                  ARRAY[COALESCE(NULLIF(dest_group, ''), %s)]
+                              )
+                          )
+                      )
                       AND (%s = 0 OR ts >= NOW() - make_interval(hours => %s))
                       AND (%s = '' OR src_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR dest_ip ILIKE '%%' || %s || '%%')
                       AND (%s = '' OR CAST(dest_port AS TEXT) = %s)
+                      AND (%s = '' OR COALESCE(rule_id, '') = %s)
                       AND (%s::TEXT[] IS NULL OR UPPER(COALESCE(protocol, '')) = ANY(%s::TEXT[]))
                       AND (%s = '' OR LOWER(COALESCE(result, '')) = %s)
                       AND NOT EXISTS (
@@ -555,6 +604,10 @@ class PostgresClient:
                           SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
                           WHERE TRIM(ex) <> '' AND CAST(dest_port AS TEXT) = TRIM(ex)
                       )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
+                          WHERE TRIM(ex) <> '' AND COALESCE(rule_id, '') = TRIM(ex)
+                      )
                     GROUP BY src_group, dest_group, direction, result
                     ORDER BY hit_count DESC, source_group, dest_group
                     LIMIT 200
@@ -563,11 +616,11 @@ class PostgresClient:
                         NO_GROUP_VALUE,
                         NO_GROUP_VALUE,
                         source_group,
-                        NO_GROUP_VALUE,
                         source_group,
-                        dest_group,
                         NO_GROUP_VALUE,
                         dest_group,
+                        dest_group,
+                        NO_GROUP_VALUE,
                         hours,
                         hours,
                         src_ip,
@@ -576,6 +629,8 @@ class PostgresClient:
                         dest_ip,
                         dest_port,
                         dest_port,
+                        rule_id,
+                        rule_id,
                         protocols_norm if protocols_norm else None,
                         protocols_norm if protocols_norm else None,
                         result_norm,
@@ -583,6 +638,7 @@ class PostgresClient:
                         ex_src,
                         ex_dest,
                         ex_port,
+                        ex_rule_id,
                     ),
                 )
                 rows = cur.fetchall()
