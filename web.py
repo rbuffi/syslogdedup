@@ -99,7 +99,12 @@ def create_inner_app() -> FastAPI:
                 ts = _groups_cache["ts"]
                 if cached is not None and (now - ts) < _GROUPS_CACHE_TTL_SEC:
                     return cached
-        out = pg.get_groups(src_ip=s or None, dest_ip=d or None)
+        out = pg.get_groups(
+            src_ip=s or None,
+            dest_ip=d or None,
+            default_window_hours=config.web.group_dropdown_window_hours,
+            default_limit=config.web.group_dropdown_limit,
+        )
         if not s and not d:
             with _groups_cache_lock:
                 _groups_cache["data"] = out

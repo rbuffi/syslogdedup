@@ -271,6 +271,9 @@ class PostgresClient:
         self,
         src_ip: Optional[str] = None,
         dest_ip: Optional[str] = None,
+        *,
+        default_window_hours: int = 168,
+        default_limit: int = 1000,
     ) -> Dict[str, List[str]]:
         """Return distinct source_group and dest_group lists for dropdowns."""
         out: Dict[str, List[str]] = {"source_groups": [], "dest_groups": []}
@@ -279,6 +282,8 @@ class PostgresClient:
         t = self.config.table
         src_ip = (src_ip or "").strip()
         dest_ip = (dest_ip or "").strip()
+        window_hours = max(1, int(default_window_hours or 168))
+        group_limit = max(1, int(default_limit or 1000))
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
                 # Source groups: scoped by src_ip when set; otherwise all distinct
@@ -308,14 +313,17 @@ class PostgresClient:
                         FROM (
                             SELECT unnest(COALESCE(src_groups, ARRAY[]::TEXT[])) AS g
                             FROM {t}
+                            WHERE ts >= NOW() - make_interval(hours => %s)
                             UNION
                             SELECT COALESCE(NULLIF(src_group, ''), %s) AS g
                             FROM {t}
+                            WHERE ts >= NOW() - make_interval(hours => %s)
                         ) src
                         WHERE g IS NOT NULL AND g != ''
                         ORDER BY 1
+                        LIMIT %s
                         """,
-                        (NO_GROUP_VALUE,),
+                        (window_hours, NO_GROUP_VALUE, window_hours, group_limit),
                     )
                 out["source_groups"] = [r["g"] for r in cur.fetchall()]
 
@@ -345,14 +353,17 @@ class PostgresClient:
                         FROM (
                             SELECT unnest(COALESCE(dest_groups, ARRAY[]::TEXT[])) AS g
                             FROM {t}
+                            WHERE ts >= NOW() - make_interval(hours => %s)
                             UNION
                             SELECT COALESCE(NULLIF(dest_group, ''), %s) AS g
                             FROM {t}
+                            WHERE ts >= NOW() - make_interval(hours => %s)
                         ) dst
                         WHERE g IS NOT NULL AND g != ''
                         ORDER BY 1
+                        LIMIT %s
                         """,
-                        (NO_GROUP_VALUE,),
+                        (window_hours, NO_GROUP_VALUE, window_hours, group_limit),
                     )
                 out["dest_groups"] = [r["g"] for r in cur.fetchall()]
         except Exception as e:

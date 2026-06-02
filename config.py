@@ -77,6 +77,8 @@ class WebConfig:
     host: str = "0.0.0.0"
     port: int = 8080
     web_base_path: str = ""
+    group_dropdown_window_hours: int = 168
+    group_dropdown_limit: int = 1000
 
 
 @dataclass
@@ -204,10 +206,24 @@ def load_config(config_path: Optional[str] = None) -> Config:
 
     web_cfg = config_data.get('web', {})
     web_base_path_raw = os.getenv('WEB_BASE_PATH', web_cfg.get('base_path', ''))
+    _group_window_hours = int(
+        os.getenv(
+            'WEB_GROUP_DROPDOWN_WINDOW_HOURS',
+            web_cfg.get('group_dropdown_window_hours', 168),
+        )
+    )
+    _group_dropdown_limit = int(
+        os.getenv(
+            'WEB_GROUP_DROPDOWN_LIMIT',
+            web_cfg.get('group_dropdown_limit', 1000),
+        )
+    )
     web_config = WebConfig(
         host=os.getenv('WEB_HOST', web_cfg.get('host', '0.0.0.0')),
         port=int(os.getenv('WEB_PORT', web_cfg.get('port', 8080))),
         web_base_path=normalize_web_base_path(web_base_path_raw),
+        group_dropdown_window_hours=max(1, _group_window_hours),
+        group_dropdown_limit=max(1, _group_dropdown_limit),
     )
 
     oidc_cfg = config_data.get('oidc', {})
