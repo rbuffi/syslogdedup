@@ -655,6 +655,8 @@ class NSXTClient:
         for g in self._groups:
             gid = g.get("id", "")
             if gid == key or self._extract_group_name(g) == key:
+                if str(g.get("path", "") or "").strip():
+                    return g
                 if gid:
                     full = self._fetch_group_detail_by_id(gid)
                     if full:
@@ -1379,18 +1381,25 @@ class NSXTClient:
 
     def _group_name_to_path(self, name: str) -> Optional[str]:
         """
-        Resolve a human-friendly group name (as shown in the UI) back to the
-        NSX-T Policy group path using the cached groups.
+        Resolve a human-friendly group name (as shown in the UI) to an NSX group path.
+
+        Uses targeted lookup (cache / GET by id / list scan on 404). Does not run a
+        full catalog refresh with IP members — that path is reserved for syslog ingest.
         """
         if not name:
             return None
 
-        self._refresh_groups_if_needed()
-        for detail in self._groups:
-            if self._extract_group_name(detail) == name:
-                path = detail.get("path") or ""
-                if path:
-                    return path
+        detail = self._resolve_group_detail_for_lookup_name(name)
+        if not detail:
+            return None
+
+        path = str(detail.get("path", "") or "").strip()
+        if path:
+            return path
+
+        gid = str(detail.get("id", "") or "").strip()
+        if gid:
+            return f"/infra/domains/default/groups/{gid}"
         return None
 
     def _sanitize_id(self, value: str) -> str:

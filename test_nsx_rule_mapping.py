@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from nsxt_client import NSXTClient
 from config import NSXTConfig
@@ -19,6 +20,7 @@ class DummyNSXTClient(NSXTClient):
             {"id": "g-src", "display_name": "src-group", "path": "/infra/domains/default/groups/src-group"},
             {"id": "g-dst", "display_name": "dst-group", "path": "/infra/domains/default/groups/dst-group"},
         ]
+        self._rebuild_group_maps()
 
     def _refresh_groups_if_needed(self):
         # Override to avoid real HTTP calls in tests
@@ -54,6 +56,37 @@ class DummyNSXTClient(NSXTClient):
             "action": "ALLOW",
         }
         return payload
+
+
+class TestGroupNameToPathNoBulkRefresh(unittest.TestCase):
+    def test_group_name_to_path_does_not_refresh_full_catalog(self):
+        cfg = NSXTConfig(host="dummy", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg)
+        detail = {
+            "id": "g1",
+            "display_name": "MyGroup",
+            "path": "/infra/domains/default/groups/g1",
+        }
+        with patch.object(NSXTClient, "_refresh_groups_if_needed") as refresh:
+            with patch.object(
+                NSXTClient, "_resolve_group_detail_for_lookup_name", return_value=detail
+            ) as resolve:
+                path = client._group_name_to_path("MyGroup")
+
+        refresh.assert_not_called()
+        resolve.assert_called_once_with("MyGroup")
+        self.assertEqual(path, "/infra/domains/default/groups/g1")
+
+    def test_group_name_to_path_builds_path_from_id_when_missing(self):
+        cfg = NSXTConfig(host="dummy", username="u", password="p", verify_ssl=False)
+        client = NSXTClient(cfg)
+        with patch.object(
+            NSXTClient,
+            "_resolve_group_detail_for_lookup_name",
+            return_value={"id": "my-group-id", "display_name": "MyGroup"},
+        ):
+            path = client._group_name_to_path("MyGroup")
+        self.assertEqual(path, "/infra/domains/default/groups/my-group-id")
 
 
 class TestDirectionAppliedToMapping(unittest.TestCase):
