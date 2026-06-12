@@ -1,6 +1,6 @@
 """PostgreSQL client for storing aggregated firewall flows."""
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 import psycopg2
 from psycopg2.extras import execute_values, RealDictCursor
@@ -49,6 +49,12 @@ class PostgresClient:
             self._ensure_table()
 
     def _connect(self):
+        if self.conn is not None:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.conn = None
         try:
             self.conn = psycopg2.connect(
                 host=self.config.host,
@@ -56,6 +62,10 @@ class PostgresClient:
                 dbname=self.config.database,
                 user=self.config.user,
                 password=self.config.password,
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=10,
+                keepalives_count=5,
             )
             self.conn.autocommit = True
             logger.info(
@@ -172,20 +182,12 @@ class PostgresClient:
             f"((LOWER(COALESCE(result, ''))))"
         )
 
-    def write_log(
+    def _flow_upsert_sql_and_values(
         self,
         log: ParsedLog,
         src_groups: Optional[List[str]] = None,
         dest_groups: Optional[List[str]] = None,
-    ) -> bool:
-        """Insert a single flow row."""
-        if not self.config.enabled:
-            return True
-        if not self.conn:
-            self._connect()
-            if not self.conn:
-                return False
-
+    ) -> Tuple[str, list]:
         src_group = src_groups[0] if src_groups else NO_GROUP_VALUE
         dest_group = dest_groups[0] if dest_groups else NO_GROUP_VALUE
         src_groups_list = [g for g in (src_groups or []) if g]
@@ -230,20 +232,47 @@ class PostgresClient:
                 log.direction,
                 log.action,
                 log.result,
-                1,  # Initial hit_count
+                1,
             )
         ]
+        return sql, values
 
-        try:
-            with self.conn.cursor() as cur:
-                execute_values(cur, sql, values)
+    def write_log(
+        self,
+        log: ParsedLog,
+        src_groups: Optional[List[str]] = None,
+        dest_groups: Optional[List[str]] = None,
+    ) -> bool:
+        """Insert a single flow row."""
+        if not self.config.enabled:
             return True
-        except Exception as e:
-            logger.debug(f"Failed to insert/update flow in PostgreSQL: {e}")
-            return False
+
+        sql, values = self._flow_upsert_sql_and_values(log, src_groups, dest_groups)
+
+        for attempt in (1, 2):
+            if not self._ensure_conn():
+                return False
+            try:
+                with self.conn.cursor() as cur:
+                    execute_values(cur, sql, values)
+                return True
+            except Exception as e:
+                if attempt == 1:
+                    logger.warning(
+                        "PostgreSQL write failed, reconnecting and retrying once: %s",
+                        e,
+                    )
+                    self.conn = None
+                    continue
+                logger.warning(
+                    "PostgreSQL write failed after reconnect: %s",
+                    e,
+                )
+                return False
+        return False
 
     def _ensure_conn(self) -> bool:
-        """Ensure we have a live connection suitable for read APIs."""
+        """Ensure we have a live PostgreSQL connection."""
         if not self.config.enabled:
             return False
 
@@ -263,6 +292,7 @@ class PostgresClient:
                     cur.execute("SELECT 1")
             except Exception:
                 logger.info("PostgreSQL connection unhealthy; reconnecting")
+                self.conn = None
                 self._connect()
 
         return self.conn is not None
