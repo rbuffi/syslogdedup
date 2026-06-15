@@ -158,7 +158,18 @@
     tr:hover:not(.group-header) td { background: rgba(88, 166, 255, 0.06); }
     tr.pair-row { cursor: pointer; }
     tr.pair-row.selected td { background: rgba(88, 166, 255, 0.12); }
+    tr.pair-row.expanded td { border-bottom: none; }
     tr.pair-row:hover td { background: rgba(88, 166, 255, 0.08); }
+    tr.pair-details-row td {
+      padding: 0;
+      background: rgba(88, 166, 255, 0.04);
+      border-bottom: 2px solid var(--accent);
+    }
+    .pair-details-panel {
+      padding: 0.75rem 1rem 1rem;
+    }
+    .pair-details-panel .hint { margin: 0 0 0.5rem; }
+    .pair-details-panel table { margin-top: 0.25rem; }
     .port-link {
       display: inline-block;
       background: var(--port-bg);
@@ -410,7 +421,6 @@
   <div id="loading" class="loading" style="display: none;">Loading…</div>
   <div id="error" class="error" style="display: none;"></div>
   <div id="tableWrap"></div>
-  <div id="detailsWrap" class="hint"></div>
   <p class="hint">Click a port to open NSX-T rule creation for that source/destination pair.</p>
 
   <div id="modalBackdrop" class="modal-backdrop">
@@ -509,7 +519,6 @@
     const loadingEl = document.getElementById('loading');
     const errorEl = document.getElementById('error');
     const tableWrap = document.getElementById('tableWrap');
-    const detailsWrap = document.getElementById('detailsWrap');
     const modalBackdrop = document.getElementById('modalBackdrop');
     const ruleModalContext = document.getElementById('ruleModalContext');
     const ruleSourceGroup = document.getElementById('ruleSourceGroup');
@@ -552,6 +561,11 @@
     let ruleContext = null;
     let ruleServicesForModal = [];
 
+    function clearPairDetails() {
+      tableWrap.querySelectorAll('tr.pair-details-row').forEach(el => el.remove());
+      tableWrap.querySelectorAll('tr.pair-row.expanded').forEach(el => el.classList.remove('expanded'));
+    }
+
     function showLoading(show) {
       loadingEl.style.display = show ? 'block' : 'none';
       if (show) errorEl.style.display = 'none';
@@ -560,7 +574,6 @@
       errorEl.textContent = msg;
       errorEl.style.display = 'block';
       tableWrap.innerHTML = '';
-      detailsWrap.innerHTML = '';
     }
     function clearError() {
       errorEl.style.display = 'none';
@@ -865,7 +878,6 @@
     async function loadRules() {
       if (!requireAuthForData()) {
         tableWrap.innerHTML = '<p class="hint">Log in om firewallgegevens te bekijken.</p>';
-        detailsWrap.innerHTML = '';
         return;
       }
       const sourceGroup = sourceSelect.value.trim();
@@ -880,12 +892,11 @@
       // Require at least some filter to avoid huge unbounded queries
       if (!sourceGroup && !destGroup && hours === 0 && !srcIp && !destIp && !port && !ruleId && !protocolsParam && !result) {
         tableWrap.innerHTML = '<p class="hint">Select a group, IP, port, rule ID, or time window, then adjust filters to load data.</p>';
-        detailsWrap.innerHTML = '';
+        selectedPair = null;
         return;
       }
       showLoading(true);
       clearError();
-      detailsWrap.innerHTML = '';
       selectedPair = null;
       try {
         const params = new URLSearchParams();
@@ -1083,8 +1094,10 @@
       void openRuleModal();
     }
 
-    function renderTable(rows, target) {
+    function renderTable(rows, target, opts) {
       const container = target || tableWrap;
+      const options = opts || {};
+      const skipGroupHeaders = !!options.skipGroupHeaders;
       if (!rows.length) {
         container.innerHTML = '<p class="hint">No rules match the selected filters.</p>';
         return;
@@ -1095,7 +1108,7 @@
       for (const row of rows) {
         const sg = row.source_group ?? '';
         const dg = row.dest_group ?? '';
-        const isNewGroup = sg !== lastSource || dg !== lastDest;
+        const isNewGroup = !skipGroupHeaders && (sg !== lastSource || dg !== lastDest);
         if (isNewGroup) {
           lastSource = sg;
           lastDest = dg;
@@ -1220,7 +1233,6 @@
     function renderGroupedTable(rows) {
       if (!rows.length) {
         tableWrap.innerHTML = '<p class="hint">No rules match the selected filters.</p>';
-        detailsWrap.innerHTML = '';
         selectedPair = null;
         return;
       }
@@ -1252,7 +1264,7 @@
           selectedPair = { sg, dg };
           tableWrap.querySelectorAll('tr.pair-row.selected').forEach(el => el.classList.remove('selected'));
           tr.classList.add('selected');
-          loadDetailsForPair(sg, dg);
+          loadDetailsForPair(sg, dg, tr);
         };
         tr.addEventListener('click', onActivate);
         tr.addEventListener('keydown', (e) => {
@@ -1264,11 +1276,13 @@
       });
     }
 
-    async function loadDetailsForPair(sg, dg) {
+    async function loadDetailsForPair(sg, dg, anchorTr) {
       if (!requireAuthForData()) {
         showError('Log in om details te bekijken.');
         return;
       }
+      if (!anchorTr) return;
+
       const hours = parseInt(hoursSelect.value || '0', 10) || 0;
       const srcIp = srcIpFilter.value.trim();
       const destIp = destIpFilter.value.trim();
@@ -1276,6 +1290,17 @@
       const ruleId = ruleIdFilter.value.trim();
       const protocolsParam = buildProtocolsParam();
       const result = getSelectedResult();
+
+      clearPairDetails();
+      anchorTr.classList.add('selected', 'expanded');
+
+      const detailsTr = document.createElement('tr');
+      detailsTr.className = 'pair-details-row';
+      detailsTr.innerHTML =
+        '<td colspan="4"><div class="pair-details-panel"><p class="hint">Loading details…</p></div></td>';
+      anchorTr.insertAdjacentElement('afterend', detailsTr);
+      const panel = detailsTr.querySelector('.pair-details-panel');
+
       showLoading(true);
       clearError();
       try {
@@ -1293,10 +1318,17 @@
         const r = await fetch(appUrl('/api/rules') + '?' + params.toString());
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
-        detailsWrap.innerHTML = '<p class="hint">Details for ' + escapeHtml(sg || '—') + ' → ' + escapeHtml(dg || '—') + ' (max ' + rows.length + ' flows)</p>';
-        renderTable(rows, detailsWrap);
+        panel.innerHTML =
+          '<p class="hint">Details for ' + escapeHtml(sg || '—') + ' → ' + escapeHtml(dg || '—') + ' (' + rows.length + ' flows)</p>';
+        const tableHost = document.createElement('div');
+        panel.appendChild(tableHost);
+        renderTable(rows, tableHost, { skipGroupHeaders: true });
+        detailsTr.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       } catch (e) {
-        showError('Failed to load details: ' + e.message);
+        detailsTr.remove();
+        anchorTr.classList.remove('expanded');
+        errorEl.textContent = 'Failed to load details: ' + e.message;
+        errorEl.style.display = 'block';
       } finally {
         showLoading(false);
       }
