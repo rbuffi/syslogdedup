@@ -170,6 +170,8 @@
     }
     .pair-details-panel .hint { margin: 0 0 0.5rem; }
     .pair-details-panel table { margin-top: 0.25rem; }
+    .pair-details-panel .details-table { border: 1px solid var(--border); }
+    .pair-details-panel .details-hint { margin: 0.35rem 0 0; font-size: 0.8rem; }
     .port-link {
       display: inline-block;
       background: var(--port-bg);
@@ -421,7 +423,6 @@
   <div id="loading" class="loading" style="display: none;">Loading…</div>
   <div id="error" class="error" style="display: none;"></div>
   <div id="tableWrap"></div>
-  <p class="hint">Click a port to open NSX-T rule creation for that source/destination pair.</p>
 
   <div id="modalBackdrop" class="modal-backdrop">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="ruleModalTitle">
@@ -1098,6 +1099,7 @@
       const container = target || tableWrap;
       const options = opts || {};
       const skipGroupHeaders = !!options.skipGroupHeaders;
+      const compact = !!options.compact;
       if (!rows.length) {
         container.innerHTML = '<p class="hint">No rules match the selected filters.</p>';
         return;
@@ -1108,7 +1110,7 @@
       for (const row of rows) {
         const sg = row.source_group ?? '';
         const dg = row.dest_group ?? '';
-        const isNewGroup = !skipGroupHeaders && (sg !== lastSource || dg !== lastDest);
+        const isNewGroup = !skipGroupHeaders && !compact && (sg !== lastSource || dg !== lastDest);
         if (isNewGroup) {
           lastSource = sg;
           lastDest = dg;
@@ -1122,25 +1124,41 @@
         const portCell = port !== '—'
           ? '<a href="#" class="port-link" data-port="' + escapeAttr(port) + '" data-source-group="' + escapeAttr(sg) + '" data-dest-group="' + escapeAttr(dg) + '" data-source-groups="' + escapeAttr(JSON.stringify(Array.isArray(row.source_groups) ? row.source_groups : [])) + '" data-dest-groups="' + escapeAttr(JSON.stringify(Array.isArray(row.dest_groups) ? row.dest_groups : [])) + '" data-src-ip="' + escapeAttr(row.src_ip ?? '') + '" data-dest-ip="' + escapeAttr(row.dest_ip ?? '') + '" data-direction="' + escapeAttr(row.direction ?? '') + '" data-protocol="' + escapeAttr(row.protocol ?? '') + '">' + escapeHtml(String(port)) + '</a>'
           : '—';
-        trs.push(
-          '<tr>' +
-          '<td>' + escapeHtml(sg) + '</td>' +
-          '<td>' + escapeHtml(dg) + '</td>' +
-          '<td>' + portCell + '</td>' +
-          '<td>' + escapeHtml(row.src_ip ?? '') + '</td>' +
-          '<td>' + escapeHtml(row.dest_ip ?? '') + '</td>' +
-          '<td>' + escapeHtml(row.direction ?? '') + '</td>' +
-          '<td>' + escapeHtml(row.result ?? '') + '</td>' +
-          '<td>' + escapeHtml(String(row.hit_count ?? '')) + '</td>' +
-          '<td>' + escapeHtml(formatLastHit(row.last_hit)) + '</td>' +
-          '</tr>'
-        );
+        if (compact) {
+          trs.push(
+            '<tr>' +
+            '<td>' + portCell + '</td>' +
+            '<td>' + escapeHtml(row.src_ip ?? '') + '</td>' +
+            '<td>' + escapeHtml(row.dest_ip ?? '') + '</td>' +
+            '<td>' + escapeHtml(row.direction ?? '') + '</td>' +
+            '<td>' + escapeHtml(row.result ?? '') + '</td>' +
+            '<td>' + escapeHtml(String(row.hit_count ?? '')) + '</td>' +
+            '<td>' + escapeHtml(formatLastHit(row.last_hit)) + '</td>' +
+            '</tr>'
+          );
+        } else {
+          trs.push(
+            '<tr>' +
+            '<td>' + escapeHtml(sg) + '</td>' +
+            '<td>' + escapeHtml(dg) + '</td>' +
+            '<td>' + portCell + '</td>' +
+            '<td>' + escapeHtml(row.src_ip ?? '') + '</td>' +
+            '<td>' + escapeHtml(row.dest_ip ?? '') + '</td>' +
+            '<td>' + escapeHtml(row.direction ?? '') + '</td>' +
+            '<td>' + escapeHtml(row.result ?? '') + '</td>' +
+            '<td>' + escapeHtml(String(row.hit_count ?? '')) + '</td>' +
+            '<td>' + escapeHtml(formatLastHit(row.last_hit)) + '</td>' +
+            '</tr>'
+          );
+        }
       }
+      const tableClass = compact ? ' class="details-table"' : '';
+      const headers = compact
+        ? '<th>Dest port</th><th>Src IP</th><th>Dest IP</th><th>Direction</th><th>Result</th><th>Hit count</th><th>Last hit</th>'
+        : '<th>Source group</th><th>Dest group</th><th>Dest port</th>' +
+          '<th>Src IP</th><th>Dest IP</th><th>Direction</th><th>Result</th><th>Hit count</th><th>Last hit</th>';
       container.innerHTML =
-        '<table><thead><tr>' +
-        '<th>Source group</th><th>Dest group</th><th>Dest port</th>' +
-        '<th>Src IP</th><th>Dest IP</th><th>Direction</th><th>Result</th><th>Hit count</th><th>Last hit</th>' +
-        '</tr></thead><tbody>' + trs.join('') + '</tbody></table>';
+        '<table' + tableClass + '><thead><tr>' + headers + '</tr></thead><tbody>' + trs.join('') + '</tbody></table>';
       container.querySelectorAll('.port-link').forEach(el => el.addEventListener('click', onPortClick));
     }
 
@@ -1319,10 +1337,14 @@
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
         panel.innerHTML =
-          '<p class="hint">Details for ' + escapeHtml(sg || '—') + ' → ' + escapeHtml(dg || '—') + ' (' + rows.length + ' flows)</p>';
+          '<p class="hint">' + rows.length + ' flow' + (rows.length === 1 ? '' : 's') + '</p>';
         const tableHost = document.createElement('div');
         panel.appendChild(tableHost);
-        renderTable(rows, tableHost, { skipGroupHeaders: true });
+        renderTable(rows, tableHost, { skipGroupHeaders: true, compact: true });
+        const hint = document.createElement('p');
+        hint.className = 'hint details-hint';
+        hint.textContent = 'Klik op een poort om een NSX-T regel aan te maken voor dit paar.';
+        panel.appendChild(hint);
         detailsTr.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       } catch (e) {
         detailsTr.remove();
