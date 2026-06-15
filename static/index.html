@@ -557,6 +557,7 @@
     let groupsLoadedForHours = null;
     let groupsLoadPromise = null;
     let selectedPair = null;
+    let detailsLoadToken = 0;
     let cachedPolicies = null;
     let cachedServices = null;
     let ruleContext = null;
@@ -565,6 +566,19 @@
     function clearPairDetails() {
       tableWrap.querySelectorAll('tr.pair-details-row').forEach(el => el.remove());
       tableWrap.querySelectorAll('tr.pair-row.expanded').forEach(el => el.classList.remove('expanded'));
+    }
+
+    function collapsePairDetails() {
+      detailsLoadToken += 1;
+      clearPairDetails();
+      tableWrap.querySelectorAll('tr.pair-row.selected').forEach(el => el.classList.remove('selected'));
+      selectedPair = null;
+    }
+
+    function isPairRowExpanded(tr) {
+      return tr.classList.contains('expanded')
+        && tr.nextElementSibling
+        && tr.nextElementSibling.classList.contains('pair-details-row');
     }
 
     function showLoading(show) {
@@ -1279,6 +1293,10 @@
         const onActivate = () => {
           const sg = tr.getAttribute('data-sg') || '';
           const dg = tr.getAttribute('data-dg') || '';
+          if (isPairRowExpanded(tr)) {
+            collapsePairDetails();
+            return;
+          }
           selectedPair = { sg, dg };
           tableWrap.querySelectorAll('tr.pair-row.selected').forEach(el => el.classList.remove('selected'));
           tr.classList.add('selected');
@@ -1301,6 +1319,7 @@
       }
       if (!anchorTr) return;
 
+      const loadToken = ++detailsLoadToken;
       const hours = parseInt(hoursSelect.value || '0', 10) || 0;
       const srcIp = srcIpFilter.value.trim();
       const destIp = destIpFilter.value.trim();
@@ -1334,8 +1353,10 @@
         if (result) params.set('result', result);
         appendExcludeParams(params);
         const r = await fetch(appUrl('/api/rules') + '?' + params.toString());
+        if (loadToken !== detailsLoadToken) return;
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
+        if (loadToken !== detailsLoadToken) return;
         panel.innerHTML =
           '<p class="hint">' + rows.length + ' flow' + (rows.length === 1 ? '' : 's') + '</p>';
         const tableHost = document.createElement('div');
@@ -1347,12 +1368,15 @@
         panel.appendChild(hint);
         detailsTr.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
       } catch (e) {
+        if (loadToken !== detailsLoadToken) return;
         detailsTr.remove();
         anchorTr.classList.remove('expanded');
         errorEl.textContent = 'Failed to load details: ' + e.message;
         errorEl.style.display = 'block';
       } finally {
-        showLoading(false);
+        if (loadToken === detailsLoadToken) {
+          showLoading(false);
+        }
       }
     }
 
