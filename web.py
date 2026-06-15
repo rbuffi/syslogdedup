@@ -160,7 +160,7 @@ def create_inner_app() -> FastAPI:
         exclude_dest_port: str = Query("", description="Comma-separated dest ports to exclude (exact)"),
         exclude_rule_id: str = Query("", description="Comma-separated rule_ids to exclude (exact)"),
     ):
-        """Rules grouped by (source_group, dest_group) with aggregated dest_ports."""
+        """Rules grouped by (source_group, dest_group) with hit_count and last_hit."""
         return pg.get_rules_grouped(
             source_group=source_group or None,
             dest_group=dest_group or None,

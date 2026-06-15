@@ -577,7 +577,7 @@ class PostgresClient:
         exclude_dest_port: Optional[List[str]] = None,
         exclude_rule_id: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Return rules grouped by (source_group, dest_group) with aggregated dest_ports."""
+        """Return rules grouped by (source_group, dest_group) with hit_count and last_hit."""
         if not self._ensure_conn():
             return []
         t = self.config.table
@@ -601,10 +601,6 @@ class PostgresClient:
                     SELECT
                         COALESCE(NULLIF(src_group, ''), %s)   AS source_group,
                         COALESCE(NULLIF(dest_group, ''), %s)  AS dest_group,
-                        array_agg(DISTINCT dest_port ORDER BY dest_port)
-                            FILTER (WHERE dest_port IS NOT NULL) AS dest_ports,
-                        direction,
-                        result,
                         SUM(hit_count)::BIGINT AS hit_count,
                         MAX(ts) AS last_hit
                     FROM {t}
@@ -649,7 +645,7 @@ class PostgresClient:
                           SELECT 1 FROM unnest(COALESCE(%s::TEXT[], ARRAY[]::TEXT[])) AS ex
                           WHERE TRIM(ex) <> '' AND COALESCE(rule_id, '') = TRIM(ex)
                       )
-                    GROUP BY src_group, dest_group, direction, result
+                    GROUP BY src_group, dest_group
                     ORDER BY hit_count DESC, source_group, dest_group
                     LIMIT 200
                     """,

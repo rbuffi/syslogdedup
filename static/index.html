@@ -156,6 +156,9 @@
     tr.group-header td:first-child { padding-left: 1rem; }
     tr:last-child td { border-bottom: none; }
     tr:hover:not(.group-header) td { background: rgba(88, 166, 255, 0.06); }
+    tr.pair-row { cursor: pointer; }
+    tr.pair-row.selected td { background: rgba(88, 166, 255, 0.12); }
+    tr.pair-row:hover td { background: rgba(88, 166, 255, 0.08); }
     .port-link {
       display: inline-block;
       background: var(--port-bg);
@@ -378,8 +381,8 @@
     <label>
       From
       <select id="hoursSelect">
-        <option value="0" selected>All time</option>
-        <option value="1">Last 1 hour</option>
+        <option value="0">All time</option>
+        <option value="1" selected>Last 1 hour</option>
         <option value="4">Last 4 hours</option>
         <option value="24">Last 24 hours</option>
         <option value="168">Last 7 days</option>
@@ -540,6 +543,9 @@
 
     let allSourceGroups = [];
     let allDestGroups = [];
+    let groupsLoaded = false;
+    let groupsLoadPromise = null;
+    let selectedPair = null;
     let cachedPolicies = null;
     let cachedServices = null;
     let ruleContext = null;
@@ -679,11 +685,24 @@
 
     async function loadGroups() {
       if (!requireAuthForData()) {
-        tableWrap.innerHTML = '<p class="hint">Log in om groepen en regels te laden.</p>';
         sourceSelect.innerHTML = '<option value="">All</option>';
         destSelect.innerHTML = '<option value="">All</option>';
+        groupsLoaded = false;
+        groupsLoadPromise = null;
         return;
       }
+      if (groupsLoadPromise) {
+        return groupsLoadPromise;
+      }
+      groupsLoadPromise = loadGroupsInner();
+      try {
+        groupsLoaded = await groupsLoadPromise;
+      } finally {
+        groupsLoadPromise = null;
+      }
+    }
+
+    async function loadGroupsInner() {
       try {
         const currentSource = sourceSelect.value;
         const currentDest = destSelect.value;
@@ -708,8 +727,17 @@
         if (currentDest && dg.includes(currentDest)) {
           destSelect.value = currentDest;
         }
+        return true;
       } catch (e) {
         showError('Failed to load groups: ' + e.message);
+        return false;
+      }
+    }
+
+    function ensureGroupsLoaded() {
+      if (!requireAuthForData()) return;
+      if (!groupsLoaded && !groupsLoadPromise) {
+        void loadGroups();
       }
     }
 
@@ -834,6 +862,7 @@
       showLoading(true);
       clearError();
       detailsWrap.innerHTML = '';
+      selectedPair = null;
       try {
         const params = new URLSearchParams();
         if (sourceGroup) params.set('source_group', sourceGroup);
@@ -1168,44 +1197,45 @@
       if (!rows.length) {
         tableWrap.innerHTML = '<p class="hint">No rules match the selected filters.</p>';
         detailsWrap.innerHTML = '';
+        selectedPair = null;
         return;
       }
       const trs = [];
       for (const row of rows) {
         const sg = row.source_group ?? '';
         const dg = row.dest_group ?? '';
-        const ports = Array.isArray(row.dest_ports) ? row.dest_ports : [];
-        const portsSummary = ports.length === 0
-          ? '—'
-          : (ports.length <= 10
-              ? ports.join(', ')
-              : ports.slice(0, 10).join(', ') + `, +${ports.length - 10} more`);
         const hitCount = row.hit_count ?? '';
-        const result = row.result ?? '';
         const lastHit = formatLastHit(row.last_hit);
+        const isSelected = selectedPair && selectedPair.sg === sg && selectedPair.dg === dg;
         trs.push(
-          '<tr>' +
+          '<tr class="pair-row' + (isSelected ? ' selected' : '') + '" data-sg="' + escapeAttr(sg) + '" data-dg="' + escapeAttr(dg) + '" tabindex="0" role="button">' +
           '<td>' + escapeHtml(sg) + '</td>' +
           '<td>' + escapeHtml(dg) + '</td>' +
-          '<td>' + escapeHtml(portsSummary) + '</td>' +
-          '<td>' + escapeHtml(result) + '</td>' +
           '<td>' + escapeHtml(String(hitCount)) + '</td>' +
           '<td>' + escapeHtml(lastHit) + '</td>' +
-          '<td><button type="button" class="btn btn-ghost" data-sg="' + escapeAttr(sg) + '" data-dg="' + escapeAttr(dg) + '">Details</button></td>' +
           '</tr>'
         );
       }
       tableWrap.innerHTML =
         '<table><thead><tr>' +
-        '<th>Source group</th><th>Dest group</th><th>Dest ports</th>' +
-        '<th>Result</th><th>Hit count</th><th>Last hit</th><th></th>' +
+        '<th>Source group</th><th>Dest group</th><th>Hit count</th><th>Last hit</th>' +
         '</tr></thead><tbody>' + trs.join('') + '</tbody></table>';
 
-      tableWrap.querySelectorAll('button[data-sg]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const sg = btn.getAttribute('data-sg') || '';
-          const dg = btn.getAttribute('data-dg') || '';
+      tableWrap.querySelectorAll('tr.pair-row').forEach(tr => {
+        const onActivate = () => {
+          const sg = tr.getAttribute('data-sg') || '';
+          const dg = tr.getAttribute('data-dg') || '';
+          selectedPair = { sg, dg };
+          tableWrap.querySelectorAll('tr.pair-row.selected').forEach(el => el.classList.remove('selected'));
+          tr.classList.add('selected');
           loadDetailsForPair(sg, dg);
+        };
+        tr.addEventListener('click', onActivate);
+        tr.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onActivate();
+          }
         });
       });
     }
@@ -1393,14 +1423,20 @@
       }
     }
 
+    sourceSelect.addEventListener('focus', ensureGroupsLoaded);
+    destSelect.addEventListener('focus', ensureGroupsLoaded);
+    sourceSelect.addEventListener('mousedown', ensureGroupsLoaded);
+    destSelect.addEventListener('mousedown', ensureGroupsLoaded);
     sourceSelect.addEventListener('change', loadRules);
     destSelect.addEventListener('change', loadRules);
     hoursSelect.addEventListener('change', loadRules);
     srcIpFilter.addEventListener('change', async () => {
+      groupsLoaded = false;
       await loadGroups();
       await loadRules();
     });
     destIpFilter.addEventListener('change', async () => {
+      groupsLoaded = false;
       await loadGroups();
       await loadRules();
     });
@@ -1507,8 +1543,8 @@
 
     (async function boot() {
       await initAuthUi();
-      await loadGroups();
       await loadProtocols();
+      await loadRules();
     })();
   </script>
 </body>

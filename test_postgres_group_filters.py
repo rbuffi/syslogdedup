@@ -89,6 +89,16 @@ class TestPostgresGroupFilters(unittest.TestCase):
         self.assertEqual(params[6], "shared")
         self.assertEqual(params[7], NO_GROUP_VALUE)
 
+    def test_get_rules_grouped_groups_by_source_dest_pair_only(self):
+        client, cur = self._client_with_fake_conn()
+
+        client.get_rules_grouped(source_group="app", dest_group="shared")
+
+        sql, _ = cur.executed[0]
+        self.assertIn("GROUP BY src_group, dest_group", sql)
+        self.assertNotIn("GROUP BY src_group, dest_group, direction, result", sql)
+        self.assertNotIn("array_agg(DISTINCT dest_port", sql)
+
     def test_get_groups_unscoped_uses_window_and_limit(self):
         client, cur = self._client_with_fake_conn()
 

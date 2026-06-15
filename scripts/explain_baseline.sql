@@ -6,11 +6,8 @@ EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)
 SELECT
     COALESCE(NULLIF(src_group, ''), 'nogroup') AS source_group,
     COALESCE(NULLIF(dest_group, ''), 'nogroup') AS dest_group,
-    array_agg(DISTINCT dest_port ORDER BY dest_port)
-        FILTER (WHERE dest_port IS NOT NULL) AS dest_ports,
-    direction,
-    result,
-    SUM(hit_count)::BIGINT AS hit_count
+    SUM(hit_count)::BIGINT AS hit_count,
+    MAX(ts) AS last_hit
 FROM flows
 WHERE ('' = '' OR COALESCE(NULLIF(src_group, ''), 'nogroup') = '')
   AND ('' = '' OR COALESCE(NULLIF(dest_group, ''), 'nogroup') = '')
@@ -20,7 +17,7 @@ WHERE ('' = '' OR COALESCE(NULLIF(src_group, ''), 'nogroup') = '')
   AND ('' = '' OR CAST(dest_port AS TEXT) = '')
   AND (ARRAY['TCP','UDP']::TEXT[] IS NULL OR UPPER(COALESCE(protocol, '')) = ANY(ARRAY['TCP','UDP']::TEXT[]))
   AND ('pass' = '' OR LOWER(COALESCE(result, '')) = 'pass')
-GROUP BY src_group, dest_group, direction, result
+GROUP BY src_group, dest_group
 ORDER BY hit_count DESC, source_group, dest_group
 LIMIT 200;
 
