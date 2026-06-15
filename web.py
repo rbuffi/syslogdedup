@@ -34,7 +34,7 @@ static_dir = Path(__file__).resolve().parent / "static"
 # Short TTL cache for full group dropdown lists (no src_ip/dest_ip); reduces heavy DISTINCT/unnest queries.
 _GROUPS_CACHE_TTL_SEC = 45.0
 _groups_cache_lock = threading.Lock()
-_groups_cache: Dict[str, Any] = {"ts": 0.0, "data": None}
+_groups_cache: Dict[str, Any] = {"ts": 0.0, "data_by_key": {}}
 
 
 def parse_protocols_csv(raw: str) -> List[str]:
@@ -88,26 +88,29 @@ def create_inner_app() -> FastAPI:
     def api_groups(
         src_ip: str = Query("", description="Filter source groups by exact source IP"),
         dest_ip: str = Query("", description="Filter destination groups by exact destination IP"),
+        hours: int = Query(0, ge=0, description="Only include groups with activity in the last N hours; 0 = default window"),
     ):
         """Distinct source_group and dest_group for dropdowns."""
         s = (src_ip or "").strip()
         d = (dest_ip or "").strip()
+        cache_key = f"h{hours}"
         if not s and not d:
             now = time.monotonic()
             with _groups_cache_lock:
-                cached = _groups_cache["data"]
+                cached = _groups_cache["data_by_key"].get(cache_key)
                 ts = _groups_cache["ts"]
                 if cached is not None and (now - ts) < _GROUPS_CACHE_TTL_SEC:
                     return cached
         out = pg.get_groups(
             src_ip=s or None,
             dest_ip=d or None,
+            window_hours=hours if hours > 0 else None,
             default_window_hours=config.web.group_dropdown_window_hours,
             default_limit=config.web.group_dropdown_limit,
         )
         if not s and not d:
             with _groups_cache_lock:
-                _groups_cache["data"] = out
+                _groups_cache["data_by_key"][cache_key] = out
                 _groups_cache["ts"] = time.monotonic()
         return out
 

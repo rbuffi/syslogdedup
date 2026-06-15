@@ -302,6 +302,7 @@ class PostgresClient:
         src_ip: Optional[str] = None,
         dest_ip: Optional[str] = None,
         *,
+        window_hours: Optional[int] = None,
         default_window_hours: int = 168,
         default_limit: int = 1000,
     ) -> Dict[str, List[str]]:
@@ -312,7 +313,10 @@ class PostgresClient:
         t = self.config.table
         src_ip = (src_ip or "").strip()
         dest_ip = (dest_ip or "").strip()
-        window_hours = max(1, int(default_window_hours or 168))
+        if window_hours is not None and int(window_hours) > 0:
+            effective_window_hours = max(1, int(window_hours))
+        else:
+            effective_window_hours = max(1, int(default_window_hours or 168))
         group_limit = max(1, int(default_limit or 1000))
         try:
             with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -353,7 +357,7 @@ class PostgresClient:
                         ORDER BY 1
                         LIMIT %s
                         """,
-                        (window_hours, NO_GROUP_VALUE, window_hours, group_limit),
+                        (effective_window_hours, NO_GROUP_VALUE, effective_window_hours, group_limit),
                     )
                 out["source_groups"] = [r["g"] for r in cur.fetchall()]
 
@@ -393,7 +397,7 @@ class PostgresClient:
                         ORDER BY 1
                         LIMIT %s
                         """,
-                        (window_hours, NO_GROUP_VALUE, window_hours, group_limit),
+                        (effective_window_hours, NO_GROUP_VALUE, effective_window_hours, group_limit),
                     )
                 out["dest_groups"] = [r["g"] for r in cur.fetchall()]
         except Exception as e:

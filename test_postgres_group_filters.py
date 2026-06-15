@@ -116,6 +116,17 @@ class TestPostgresGroupFilters(unittest.TestCase):
         self.assertIn("LIMIT %s", dest_sql)
         self.assertEqual(dest_params, (168, NO_GROUP_VALUE, 168, 1000))
 
+    def test_get_groups_custom_window_hours(self):
+        client, cur = self._client_with_fake_conn()
+
+        client.get_groups(window_hours=1, default_window_hours=168, default_limit=1000)
+
+        self.assertEqual(len(cur.executed), 2)
+        source_params = cur.executed[0][1]
+        dest_params = cur.executed[1][1]
+        self.assertEqual(source_params, (1, NO_GROUP_VALUE, 1, 1000))
+        self.assertEqual(dest_params, (1, NO_GROUP_VALUE, 1, 1000))
+
     def test_get_groups_scoped_by_ip_skips_windowed_default(self):
         client, cur = self._client_with_fake_conn()
 

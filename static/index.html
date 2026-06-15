@@ -544,6 +544,7 @@
     let allSourceGroups = [];
     let allDestGroups = [];
     let groupsLoaded = false;
+    let groupsLoadedForHours = null;
     let groupsLoadPromise = null;
     let selectedPair = null;
     let cachedPolicies = null;
@@ -683,49 +684,63 @@
       }
     }
 
+    function invalidateGroupsCache() {
+      groupsLoaded = false;
+      groupsLoadedForHours = null;
+      groupsLoadPromise = null;
+    }
+
+    function getHoursFilter() {
+      return parseInt(hoursSelect.value || '0', 10) || 0;
+    }
+
     async function loadGroups() {
       if (!requireAuthForData()) {
         sourceSelect.innerHTML = '<option value="">All</option>';
         destSelect.innerHTML = '<option value="">All</option>';
-        groupsLoaded = false;
-        groupsLoadPromise = null;
+        invalidateGroupsCache();
         return;
       }
       if (groupsLoadPromise) {
         return groupsLoadPromise;
       }
-      groupsLoadPromise = loadGroupsInner();
+      const hours = getHoursFilter();
+      groupsLoadPromise = loadGroupsInner(hours);
       try {
         groupsLoaded = await groupsLoadPromise;
+        if (groupsLoaded) {
+          groupsLoadedForHours = hours;
+        }
       } finally {
         groupsLoadPromise = null;
       }
     }
 
-    async function loadGroupsInner() {
+    async function loadGroupsInner(hours) {
       try {
-        const currentSource = sourceSelect.value;
-        const currentDest = destSelect.value;
         const srcIp = srcIpFilter.value.trim();
         const destIp = destIpFilter.value.trim();
         const params = new URLSearchParams();
         if (srcIp) params.set('src_ip', srcIp);
         if (destIp) params.set('dest_ip', destIp);
+        if (hours > 0) params.set('hours', String(hours));
         const suffix = params.toString();
         const r = await fetch(appUrl('/api/groups') + (suffix ? ('?' + suffix) : ''));
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         const sg = data.source_groups || [];
         const dg = data.dest_groups || [];
+        const selectedSource = sourceSelect.value;
+        const selectedDest = destSelect.value;
         allSourceGroups = sg.slice();
         allDestGroups = dg.slice();
         sourceSelect.innerHTML = '<option value="">All</option>' + sg.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)}</option>`).join('');
         destSelect.innerHTML = '<option value="">All</option>' + dg.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)}</option>`).join('');
-        if (currentSource && sg.includes(currentSource)) {
-          sourceSelect.value = currentSource;
+        if (selectedSource && sg.includes(selectedSource)) {
+          sourceSelect.value = selectedSource;
         }
-        if (currentDest && dg.includes(currentDest)) {
-          destSelect.value = currentDest;
+        if (selectedDest && dg.includes(selectedDest)) {
+          destSelect.value = selectedDest;
         }
         return true;
       } catch (e) {
@@ -734,11 +749,20 @@
       }
     }
 
-    function ensureGroupsLoaded() {
+    async function ensureGroupsLoaded() {
       if (!requireAuthForData()) return;
-      if (!groupsLoaded && !groupsLoadPromise) {
-        void loadGroups();
+      const hours = getHoursFilter();
+      if (groupsLoaded && groupsLoadedForHours === hours) return;
+      if (groupsLoadPromise) {
+        await groupsLoadPromise;
+        if (groupsLoaded && groupsLoadedForHours === hours) return;
       }
+      await loadGroups();
+    }
+
+    async function onGroupFilterChange() {
+      await ensureGroupsLoaded();
+      await loadRules();
     }
 
     async function loadProtocols() {
@@ -1423,20 +1447,24 @@
       }
     }
 
-    sourceSelect.addEventListener('focus', ensureGroupsLoaded);
-    destSelect.addEventListener('focus', ensureGroupsLoaded);
-    sourceSelect.addEventListener('mousedown', ensureGroupsLoaded);
-    destSelect.addEventListener('mousedown', ensureGroupsLoaded);
-    sourceSelect.addEventListener('change', loadRules);
-    destSelect.addEventListener('change', loadRules);
-    hoursSelect.addEventListener('change', loadRules);
+    sourceSelect.addEventListener('focus', () => { void ensureGroupsLoaded(); });
+    destSelect.addEventListener('focus', () => { void ensureGroupsLoaded(); });
+    sourceSelect.addEventListener('mousedown', () => { void ensureGroupsLoaded(); });
+    destSelect.addEventListener('mousedown', () => { void ensureGroupsLoaded(); });
+    sourceSelect.addEventListener('change', onGroupFilterChange);
+    destSelect.addEventListener('change', onGroupFilterChange);
+    hoursSelect.addEventListener('change', async () => {
+      invalidateGroupsCache();
+      await loadGroups();
+      await loadRules();
+    });
     srcIpFilter.addEventListener('change', async () => {
-      groupsLoaded = false;
+      invalidateGroupsCache();
       await loadGroups();
       await loadRules();
     });
     destIpFilter.addEventListener('change', async () => {
-      groupsLoaded = false;
+      invalidateGroupsCache();
       await loadGroups();
       await loadRules();
     });
