@@ -99,7 +99,7 @@ def _inner_path_for_auth(request: Request) -> str:
 
 def is_oidc_public_path(path: str) -> bool:
     """Paths that do not require an authenticated session when OIDC is enabled."""
-    if path in ("/", "/favicon.ico", "/api/auth/status"):
+    if path in ("/login", "/favicon.ico", "/api/auth/status"):
         return True
     if path.startswith("/static"):
         return True
@@ -126,7 +126,7 @@ class OIDCAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
         if path.startswith("/api"):
             return JSONResponse({"detail": "Not authenticated"}, status_code=401)
-        return RedirectResponse(url=_url_with_base("/"), status_code=302)
+        return RedirectResponse(url=_url_with_base("/login"), status_code=302)
 
 
 @router.get("/login")

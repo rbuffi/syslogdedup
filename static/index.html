@@ -546,9 +546,50 @@
 
     /** Set after /api/auth/status: OIDC off → data allowed; OIDC on → need session. */
     let authState = { oidcEnabled: false, authenticated: true };
+    let authPollTimer = null;
 
     function requireAuthForData() {
       return !authState.oidcEnabled || authState.authenticated;
+    }
+
+    function redirectToLogin(reason) {
+      const suffix = reason ? ('?reason=' + encodeURIComponent(reason)) : '';
+      window.location.assign(appUrl('/login') + suffix);
+    }
+
+    function handleAuthFailure(response) {
+      if (response && response.status === 401 && authState.oidcEnabled) {
+        authState.authenticated = false;
+        redirectToLogin('expired');
+        return true;
+      }
+      return false;
+    }
+
+    async function fetchWithAuth(url, options) {
+      const response = await fetch(url, options);
+      handleAuthFailure(response);
+      return response;
+    }
+
+    function startAuthPolling() {
+      if (authPollTimer) {
+        clearInterval(authPollTimer);
+        authPollTimer = null;
+      }
+      if (!authState.oidcEnabled || !authState.authenticated) return;
+      authPollTimer = setInterval(async () => {
+        try {
+          const r = await fetch(appUrl('/api/auth/status'), { cache: 'no-store' });
+          if (!r.ok) return;
+          const data = await r.json();
+          if (data.oidc_enabled && !data.authenticated) {
+            redirectToLogin('expired');
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }, 60000);
     }
 
     let allSourceGroups = [];
@@ -599,13 +640,15 @@
       const d = (destIp || '').trim();
       const out = { source_groups: [], dest_groups: [] };
       if (s) {
-        const r = await fetch(appUrl('/api/groups') + '?' + new URLSearchParams({ src_ip: s }));
+        const r = await fetchWithAuth(appUrl('/api/groups') + '?' + new URLSearchParams({ src_ip: s }));
+        if (handleAuthFailure(r)) return out;
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         out.source_groups = data.source_groups || [];
       }
       if (d) {
-        const r = await fetch(appUrl('/api/groups') + '?' + new URLSearchParams({ dest_ip: d }));
+        const r = await fetchWithAuth(appUrl('/api/groups') + '?' + new URLSearchParams({ dest_ip: d }));
+        if (handleAuthFailure(r)) return out;
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         out.dest_groups = data.dest_groups || [];
@@ -633,7 +676,8 @@
       if (options.forceRefresh && only.length) {
         only.forEach(function (g) { params.append('only_group', g); });
       }
-      const r = await fetch(appUrl('/api/nsx/ip-groups') + '?' + params.toString());
+      const r = await fetchWithAuth(appUrl('/api/nsx/ip-groups') + '?' + params.toString());
+      if (handleAuthFailure(r)) return out;
       if (!r.ok) {
         let detail = r.statusText || String(r.status);
         const errText = await r.text();
@@ -753,7 +797,8 @@
         if (destIp) params.set('dest_ip', destIp);
         if (hours > 0) params.set('hours', String(hours));
         const suffix = params.toString();
-        const r = await fetch(appUrl('/api/groups') + (suffix ? ('?' + suffix) : ''));
+        const r = await fetchWithAuth(appUrl('/api/groups') + (suffix ? ('?' + suffix) : ''));
+        if (handleAuthFailure(r)) return false;
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         const sg = data.source_groups || [];
@@ -801,7 +846,8 @@
       }
       try {
         const currentProtocols = new Set(getSelectedProtocols());
-        const r = await fetch(appUrl('/api/protocols'));
+        const r = await fetchWithAuth(appUrl('/api/protocols'));
+        if (handleAuthFailure(r)) return;
         if (!r.ok) throw new Error(r.statusText);
         const data = await r.json();
         const protocols = Array.isArray(data.protocols) ? data.protocols : [];
@@ -925,7 +971,8 @@
         if (protocolsParam) params.set('protocols', protocolsParam);
         if (result) params.set('result', result);
         appendExcludeParams(params);
-        const r = await fetch(appUrl('/api/rules/grouped') + '?' + params.toString());
+        const r = await fetchWithAuth(appUrl('/api/rules/grouped') + '?' + params.toString());
+        if (handleAuthFailure(r)) return;
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
         renderGroupedTable(rows);
@@ -1179,7 +1226,8 @@
     async function ensurePoliciesLoaded() {
       if (cachedPolicies) return cachedPolicies;
       try {
-        const r = await fetch(appUrl('/api/nsx/policies'));
+        const r = await fetchWithAuth(appUrl('/api/nsx/policies'));
+        if (handleAuthFailure(r)) throw new Error('Session expired');
         if (!r.ok) throw new Error(r.statusText);
         cachedPolicies = await r.json();
       } catch (e) {
@@ -1191,7 +1239,8 @@
     async function ensureServicesLoaded() {
       if (cachedServices) return cachedServices;
       try {
-        const r = await fetch(appUrl('/api/nsx/services'));
+        const r = await fetchWithAuth(appUrl('/api/nsx/services'));
+        if (handleAuthFailure(r)) throw new Error('Session expired');
         if (!r.ok) throw new Error(r.statusText);
         cachedServices = await r.json();
       } catch (e) {
@@ -1352,7 +1401,8 @@
         if (protocolsParam) params.set('protocols', protocolsParam);
         if (result) params.set('result', result);
         appendExcludeParams(params);
-        const r = await fetch(appUrl('/api/rules') + '?' + params.toString());
+        const r = await fetchWithAuth(appUrl('/api/rules') + '?' + params.toString());
+        if (handleAuthFailure(r)) return;
         if (loadToken !== detailsLoadToken) return;
         if (!r.ok) throw new Error(r.statusText);
         const rows = await r.json();
@@ -1504,11 +1554,12 @@
           protocol: ruleContext.protocol || null,
           comment: comment || null
         };
-        const r = await fetch(appUrl('/api/nsx/rules'), {
+        const r = await fetchWithAuth(appUrl('/api/nsx/rules'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
+        if (handleAuthFailure(r)) return;
         if (!r.ok) {
           const text = await r.text();
           throw new Error(text || r.statusText);
@@ -1633,15 +1684,18 @@
             if (loginBtn) loginBtn.style.display = 'none';
             if (loginHint) loginHint.style.display = 'none';
           } else {
-            if (loginBtn) loginBtn.style.display = 'inline-block';
+            if (loginBtn) loginBtn.style.display = 'none';
             if (logoutBtn) logoutBtn.style.display = 'none';
-            if (loginHint) loginHint.style.display = 'block';
+            if (loginHint) loginHint.style.display = 'none';
+            redirectToLogin();
+            return;
           }
         } else {
           if (loginBtn) loginBtn.style.display = 'none';
           if (logoutBtn) logoutBtn.style.display = 'none';
           if (loginHint) loginHint.style.display = 'none';
         }
+        startAuthPolling();
       } catch (_) {
         /* ignore */
       }

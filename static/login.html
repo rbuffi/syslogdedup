@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Firewall rules</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --surface: #1a2332;
+      --border: #2d3a4d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #58a6ff;
+      --accent-hover: #79b8ff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 1rem;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .card {
+      width: min(480px, 100%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+    }
+    h1 {
+      margin: 0 0 0.5rem;
+      font-size: 1.2rem;
+    }
+    p {
+      margin: 0.5rem 0 0;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+    .alert {
+      margin-top: 0.75rem;
+      color: #f85149;
+      font-size: 0.9rem;
+      display: none;
+    }
+    .btn {
+      display: inline-block;
+      margin-top: 1rem;
+      padding: 0.45rem 0.9rem;
+      border-radius: 6px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #0b1020;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .btn:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Sign in required</h1>
+    <p>You need to sign in with Keycloak to open the Firewall rules dashboard.</p>
+    <p id="expiredHint" class="alert">Your session expired. Please sign in again.</p>
+    <a id="loginBtn" class="btn" href="#">Log in</a>
+  </main>
+  <script>
+    const BASE = (typeof window.__BASE_PATH__ === 'string' ? window.__BASE_PATH__ : '').replace(/\/$/, '');
+    function appUrl(path) {
+      if (!path.startsWith('/')) path = '/' + path;
+      return BASE ? (BASE + path) : path;
+    }
+    document.getElementById('loginBtn').href = appUrl('/auth/login');
+    const params = new URLSearchParams(window.location.search || '');
+    if ((params.get('reason') || '').toLowerCase() === 'expired') {
+      document.getElementById('expiredHint').style.display = 'block';
+    }
+  </script>
+</body>
+</html>

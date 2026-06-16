@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, List
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from pydantic import BaseModel
@@ -359,22 +359,42 @@ def create_inner_app() -> FastAPI:
 
         return JSONResponse({"rule_name": rule_name, "nsx_response": result})
 
-    @inner.get("/", response_class=HTMLResponse)
-    def index():
-        """Serve the firewall rules UI with optional WEB_BASE_PATH injection."""
-        index_path = static_dir / "index.html"
-        if not index_path.exists():
+    def _serve_ui_file(file_name: str) -> HTMLResponse:
+        file_path = static_dir / file_name
+        if not file_path.exists():
             return HTMLResponse(
-                "<p>Static files not found. Create <code>static/index.html</code>.</p>",
+                f"<p>Static file not found. Create <code>static/{file_name}</code>.</p>",
                 status_code=404,
             )
-        html = index_path.read_text(encoding="utf-8")
+        html = file_path.read_text(encoding="utf-8")
         inject = f"<script>window.__BASE_PATH__ = {json.dumps(config.web.web_base_path)};</script>\n"
         if "<head>" in html:
             html = html.replace("<head>", "<head>\n" + inject, 1)
         else:
             html = inject + html
         return HTMLResponse(content=html, media_type="text/html")
+
+    def _base_url(path: str) -> str:
+        if not path.startswith("/"):
+            path = "/" + path
+        if not config.web.web_base_path:
+            return path
+        return config.web.web_base_path.rstrip("/") + path
+
+    @inner.get("/login", response_class=HTMLResponse)
+    def login_page(request: Request):
+        """Serve dedicated login page when OIDC is enabled."""
+        if not config.oidc.enabled:
+            return RedirectResponse(url=_base_url("/"), status_code=302)
+        session = getattr(request, "session", None)
+        if session and session.get("user"):
+            return RedirectResponse(url=_base_url("/"), status_code=302)
+        return _serve_ui_file("login.html")
+
+    @inner.get("/", response_class=HTMLResponse)
+    def index():
+        """Serve the firewall rules UI with optional WEB_BASE_PATH injection."""
+        return _serve_ui_file("index.html")
 
     return inner
 
