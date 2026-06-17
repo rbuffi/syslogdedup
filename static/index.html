@@ -127,6 +127,38 @@
     }
     .loading, .error { margin: 1rem 0; }
     .error { color: #f85149; }
+    .error-box {
+      border: 1px solid #f85149;
+      border-radius: 8px;
+      background: rgba(248, 81, 73, 0.1);
+      padding: 0.7rem 0.85rem;
+    }
+    .error-title {
+      margin: 0;
+      font-weight: 700;
+      font-size: 0.95rem;
+      color: #ffb3ad;
+    }
+    .error-reason {
+      margin: 0.3rem 0 0;
+      color: #ffd1cc;
+      font-size: 0.88rem;
+    }
+    .error-action {
+      margin: 0.3rem 0 0;
+      color: #ffb3ad;
+      font-size: 0.82rem;
+    }
+    .error-retry {
+      margin-top: 0.55rem;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      padding: 0.28rem 0.65rem;
+      background: var(--surface);
+      color: var(--text);
+      cursor: pointer;
+      font-size: 0.83rem;
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -558,9 +590,13 @@
     }
 
     function handleAuthFailure(response) {
-      if (response && response.status === 401 && authState.oidcEnabled) {
+      if (response && response.status === 401) {
         authState.authenticated = false;
-        redirectToLogin('expired');
+        const loginPath = appUrl('/login');
+        const onLoginPage = window.location.pathname === loginPath || window.location.pathname.endsWith('/login');
+        if (!onLoginPage) {
+          redirectToLogin('expired');
+        }
         return true;
       }
       return false;
@@ -599,6 +635,7 @@
     let groupsLoadPromise = null;
     let selectedPair = null;
     let detailsLoadToken = 0;
+    let lastFailedAction = null;
     let cachedPolicies = null;
     let cachedServices = null;
     let ruleContext = null;
@@ -626,12 +663,78 @@
       loadingEl.style.display = show ? 'block' : 'none';
       if (show) errorEl.style.display = 'none';
     }
-    function showError(msg) {
-      errorEl.textContent = msg;
+    function formatLoadError(error, contextLabel) {
+      const status = Number(error && error.httpStatus);
+      if (status === 401) {
+        return {
+          title: 'Data ophalen mislukt',
+          reason: contextLabel + ': je sessie is verlopen.',
+          actionHint: 'Log opnieuw in om verder te gaan.'
+        };
+      }
+      if (status >= 500) {
+        return {
+          title: 'Data ophalen mislukt',
+          reason: contextLabel + ': serverfout (HTTP ' + status + ').',
+          actionHint: 'Probeer opnieuw. Blijft het probleem, controleer de backend.'
+        };
+      }
+      if (status >= 400) {
+        return {
+          title: 'Data ophalen mislukt',
+          reason: contextLabel + ': verzoek afgewezen (HTTP ' + status + ').',
+          actionHint: 'Controleer filters en probeer opnieuw.'
+        };
+      }
+      if (error && error.name === 'TypeError') {
+        return {
+          title: 'Data ophalen mislukt',
+          reason: contextLabel + ': geen verbinding met de server.',
+          actionHint: 'Controleer netwerk/VPN en probeer opnieuw.'
+        };
+      }
+      return {
+        title: 'Data ophalen mislukt',
+        reason: contextLabel + ': ' + ((error && error.message) ? error.message : 'onbekende fout.'),
+        actionHint: 'Probeer opnieuw.'
+      };
+    }
+
+    function createHttpError(response, fallbackMessage) {
+      const err = new Error(fallbackMessage || response.statusText || ('HTTP ' + response.status));
+      err.httpStatus = response.status;
+      return err;
+    }
+
+    function showLoadError(contextLabel, error, retryAction) {
+      const info = formatLoadError(error, contextLabel);
+      lastFailedAction = typeof retryAction === 'function' ? retryAction : null;
+      const retryHtml = lastFailedAction
+        ? '<button type="button" class="error-retry" data-retry-load="1">Opnieuw proberen</button>'
+        : '';
+      errorEl.innerHTML =
+        '<div class="error-box">' +
+        '<p class="error-title">' + escapeHtml(info.title) + '</p>' +
+        '<p class="error-reason">' + escapeHtml(info.reason) + '</p>' +
+        '<p class="error-action">' + escapeHtml(info.actionHint) + '</p>' +
+        retryHtml +
+        '</div>';
+      const retryBtn = errorEl.querySelector('button[data-retry-load]');
+      if (retryBtn && lastFailedAction) {
+        retryBtn.addEventListener('click', () => {
+          const fn = lastFailedAction;
+          if (typeof fn === 'function') void fn();
+        });
+      }
       errorEl.style.display = 'block';
-      tableWrap.innerHTML = '';
+    }
+
+    function showError(msg) {
+      showLoadError('Data ophalen', new Error(msg), null);
     }
     function clearError() {
+      lastFailedAction = null;
+      errorEl.innerHTML = '';
       errorEl.style.display = 'none';
     }
 
@@ -642,14 +745,14 @@
       if (s) {
         const r = await fetchWithAuth(appUrl('/api/groups') + '?' + new URLSearchParams({ src_ip: s }));
         if (handleAuthFailure(r)) return out;
-        if (!r.ok) throw new Error(r.statusText);
+        if (!r.ok) throw createHttpError(r, 'groepgegevens konden niet worden opgehaald');
         const data = await r.json();
         out.source_groups = data.source_groups || [];
       }
       if (d) {
         const r = await fetchWithAuth(appUrl('/api/groups') + '?' + new URLSearchParams({ dest_ip: d }));
         if (handleAuthFailure(r)) return out;
-        if (!r.ok) throw new Error(r.statusText);
+        if (!r.ok) throw createHttpError(r, 'groepgegevens konden niet worden opgehaald');
         const data = await r.json();
         out.dest_groups = data.dest_groups || [];
       }
@@ -817,7 +920,9 @@
         }
         return true;
       } catch (e) {
-        showError('Failed to load groups: ' + e.message);
+        showLoadError('Groepen laden', e, async () => {
+          await loadGroups();
+        });
         return false;
       }
     }
@@ -848,7 +953,7 @@
         const currentProtocols = new Set(getSelectedProtocols());
         const r = await fetchWithAuth(appUrl('/api/protocols'));
         if (handleAuthFailure(r)) return;
-        if (!r.ok) throw new Error(r.statusText);
+        if (!r.ok) throw createHttpError(r, 'protocolgegevens konden niet worden opgehaald');
         const data = await r.json();
         const protocols = Array.isArray(data.protocols) ? data.protocols : [];
         protocolOptions.innerHTML = protocols
@@ -873,7 +978,9 @@
         });
         updateProtocolDropdownLabel();
       } catch (e) {
-        showError('Failed to load protocols: ' + e.message);
+        showLoadError('Protocollen laden', e, async () => {
+          await loadProtocols();
+        });
       }
     }
 
@@ -973,12 +1080,14 @@
         appendExcludeParams(params);
         const r = await fetchWithAuth(appUrl('/api/rules/grouped') + '?' + params.toString());
         if (handleAuthFailure(r)) return;
-        if (!r.ok) throw new Error(r.statusText);
+        if (!r.ok) throw createHttpError(r, 'regels konden niet worden opgehaald');
         const rows = await r.json();
         renderGroupedTable(rows);
         }
       catch (e) {
-        showError('Failed to load rules: ' + e.message);
+        showLoadError('Overzicht laden', e, async () => {
+          await loadRules();
+        });
       } finally {
         showLoading(false);
       }
@@ -1404,7 +1513,7 @@
         const r = await fetchWithAuth(appUrl('/api/rules') + '?' + params.toString());
         if (handleAuthFailure(r)) return;
         if (loadToken !== detailsLoadToken) return;
-        if (!r.ok) throw new Error(r.statusText);
+        if (!r.ok) throw createHttpError(r, 'details konden niet worden opgehaald');
         const rows = await r.json();
         if (loadToken !== detailsLoadToken) return;
         panel.innerHTML =
@@ -1421,8 +1530,22 @@
         if (loadToken !== detailsLoadToken) return;
         detailsTr.remove();
         anchorTr.classList.remove('expanded');
-        errorEl.textContent = 'Failed to load details: ' + e.message;
-        errorEl.style.display = 'block';
+        showLoadError('Details laden', e, async () => {
+          const sgRetry = sg;
+          const dgRetry = dg;
+          const rows = tableWrap.querySelectorAll('tr.pair-row');
+          let target = null;
+          rows.forEach((rowEl) => {
+            if (!target && (rowEl.getAttribute('data-sg') || '') === sgRetry && (rowEl.getAttribute('data-dg') || '') === dgRetry) {
+              target = rowEl;
+            }
+          });
+          if (target) {
+            await loadDetailsForPair(sgRetry, dgRetry, target);
+          } else {
+            await loadRules();
+          }
+        });
       } finally {
         if (loadToken === detailsLoadToken) {
           showLoading(false);
