@@ -1,10 +1,12 @@
 """Web API and UI for listing firewall rules (read-only). Run with: WEB_ONLY=true uvicorn web:app --host 0.0.0.0 --port 8080"""
 import json
+import logging
 import os
 import threading
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict, Optional, List
+from typing import Any, AsyncIterator, Callable, Dict, Optional, List
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -30,6 +32,7 @@ except Exception:
     nsxt = None
 
 static_dir = Path(__file__).resolve().parent / "static"
+logger = logging.getLogger(__name__)
 
 # Short TTL cache for full group dropdown lists (no src_ip/dest_ip); reduces heavy DISTINCT/unnest queries.
 _GROUPS_CACHE_TTL_SEC = 45.0
@@ -49,9 +52,59 @@ def parse_result(raw: str) -> str:
     return (raw or "").strip().lower()
 
 
-def create_inner_app() -> FastAPI:
+def _env_float(name: str, default: float) -> float:
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("Invalid %s=%r; using default %s", name, raw, default)
+        return default
+
+
+def bootstrap_postgres_schema() -> None:
+    """Block until PostgreSQL schema and performance indexes are ready."""
+    if not config.postgres.enabled:
+        logger.info("PostgreSQL disabled; skipping schema bootstrap")
+        return
+
+    timeout_sec = _env_float("PG_STARTUP_TIMEOUT_SEC", 60.0)
+    interval_sec = _env_float("PG_STARTUP_RETRY_INTERVAL_SEC", 2.0)
+    deadline = time.monotonic() + timeout_sec
+
+    while True:
+        if pg.ensure_schema():
+            logger.info("PostgreSQL schema and indexes ready")
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"PostgreSQL schema bootstrap failed after {timeout_sec:g}s; "
+                "check PG connectivity and permissions"
+            )
+        logger.warning(
+            "PostgreSQL schema not ready; retrying in %ss",
+            interval_sec,
+        )
+        time.sleep(interval_sec)
+
+
+def create_app_lifespan() -> Callable[[FastAPI], AsyncIterator[None]]:
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        bootstrap_postgres_schema()
+        yield
+
+    return lifespan
+
+
+def create_inner_app(lifespan: Optional[Callable[[FastAPI], AsyncIterator[None]]] = None) -> FastAPI:
     """Inner FastAPI app (routes at /, /api, /static, /auth)."""
-    inner = FastAPI(title="Firewall rules", description="List and filter firewall flows for NSX-T")
+    inner = FastAPI(
+        title="Firewall rules",
+        description="List and filter firewall flows for NSX-T",
+        lifespan=lifespan,
+    )
 
     if static_dir.is_dir():
         inner.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
@@ -400,7 +453,7 @@ def create_inner_app() -> FastAPI:
 
 
 if config.web.web_base_path:
-    app = FastAPI()
+    app = FastAPI(lifespan=create_app_lifespan())
     app.mount(config.web.web_base_path, create_inner_app())
 else:
-    app = create_inner_app()
+    app = create_inner_app(lifespan=create_app_lifespan())

@@ -80,6 +80,8 @@ Alternatively, you can use environment variables:
 - `PG_USER` (required if Postgres enabled)
 - `PG_PASSWORD` (optional)
 - `PG_TABLE` (default: flows)
+- `PG_STARTUP_TIMEOUT_SEC` (default: 60; web pod waits for schema/index bootstrap)
+- `PG_STARTUP_RETRY_INTERVAL_SEC` (default: 2; delay between bootstrap retries)
 - `WEB_ONLY` (set to `true` to run only the web UI, without syslog/NSXT config)
 - `WEB_HOST` (default: 0.0.0.0)
 - `WEB_PORT` (default: 8080)
@@ -157,6 +159,9 @@ Manifests live under [`k8s/`](k8s/). Typical flow:
    ```
 
 5. Optional HTTP ingress: edit and apply [`k8s/web-ingress.yaml`](k8s/web-ingress.yaml) (`ingressClassName`, host, TLS). Set `OIDC_REDIRECT_URI` to match the public URL (e.g. `https://<ingress-host>/auth/callback`).
+
+   On startup, the **web pod** connects to PostgreSQL and creates performance indexes if missing (`CREATE INDEX IF NOT EXISTS`) before accepting HTTP traffic. If Postgres is not ready yet, it retries until `PG_STARTUP_TIMEOUT_SEC` (then the process exits and Kubernetes restarts the pod).
+
 6. Optional UDP syslog: uncomment syslog resources in [`k8s/kustomization.yaml`](k8s/kustomization.yaml), configure [`k8s/syslog-deployment.yaml`](k8s/syslog-deployment.yaml), ensure Secret contains `nsxt-password`, push `syslogdedup-syslog` image.
 
 ## Usage

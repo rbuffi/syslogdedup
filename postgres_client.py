@@ -44,6 +44,7 @@ class PostgresClient:
     def __init__(self, config: PostgresConfig):
         self.config = config
         self.conn = None
+        self._schema_ready = False
         if self.config.enabled:
             self._connect()
             self._ensure_table()
@@ -78,10 +79,23 @@ class PostgresClient:
             logger.error(f"Failed to connect to PostgreSQL: {e}")
             self.conn = None
 
-    def _ensure_table(self):
+    def ensure_schema(self) -> bool:
+        """Ensure table, columns, backfill, and performance indexes exist (idempotent)."""
+        if not self.config.enabled:
+            return False
+        if self._schema_ready:
+            return True
+        if not self._ensure_conn():
+            return False
+        if self._ensure_table():
+            self._schema_ready = True
+            return True
+        return False
+
+    def _ensure_table(self) -> bool:
         """Create the flows table if it doesn't exist."""
         if not self.conn:
-            return
+            return False
         sql = f"""
         CREATE TABLE IF NOT EXISTS {self.config.table} (
             id SERIAL PRIMARY KEY,
@@ -133,54 +147,70 @@ class PostgresClient:
                     """,
                     (NO_GROUP_VALUE,),
                 )
-                self._ensure_performance_indexes(cur)
+                if not self._ensure_performance_indexes(cur):
+                    return False
         except Exception as e:
             logger.error(f"Failed to ensure PostgreSQL table: {e}")
+            return False
+        return True
 
-    def _ensure_performance_indexes(self, cur) -> None:
+    def _ensure_performance_indexes(self, cur) -> bool:
         """Create indexes for common UI filters (idempotent). GIN/trgm requires pg_trgm."""
         t = self.config.table
         ng = NO_GROUP_VALUE.replace("'", "''")
+        ok = True
 
-        def run(sql: str) -> None:
+        def run(sql: str, label: str) -> None:
+            nonlocal ok
             try:
                 cur.execute(sql)
+                logger.info("PostgreSQL index ensured: %s", label)
             except Exception as e:
-                logger.warning("Index DDL skipped or failed: %s", e)
+                ok = False
+                logger.error("Index DDL failed (%s): %s", label, e)
 
         try:
             cur.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
+            logger.info("PostgreSQL extension ensured: pg_trgm")
         except Exception as e:
+            ok = False
             logger.warning(
                 "pg_trgm extension unavailable (%s); skipping GIN trigram indexes on IP columns.",
                 e,
             )
         else:
             run(
-                f"CREATE INDEX IF NOT EXISTS {t}_src_ip_trgm_idx ON {t} USING gin (src_ip gin_trgm_ops)"
+                f"CREATE INDEX IF NOT EXISTS {t}_src_ip_trgm_idx ON {t} USING gin (src_ip gin_trgm_ops)",
+                f"{t}_src_ip_trgm_idx",
             )
             run(
-                f"CREATE INDEX IF NOT EXISTS {t}_dest_ip_trgm_idx ON {t} USING gin (dest_ip gin_trgm_ops)"
+                f"CREATE INDEX IF NOT EXISTS {t}_dest_ip_trgm_idx ON {t} USING gin (dest_ip gin_trgm_ops)",
+                f"{t}_dest_ip_trgm_idx",
             )
 
-        run(f"CREATE INDEX IF NOT EXISTS {t}_ts_desc_idx ON {t} (ts DESC)")
-        run(f"CREATE INDEX IF NOT EXISTS {t}_dest_port_idx ON {t} (dest_port)")
+        run(f"CREATE INDEX IF NOT EXISTS {t}_ts_desc_idx ON {t} (ts DESC)", f"{t}_ts_desc_idx")
+        run(f"CREATE INDEX IF NOT EXISTS {t}_dest_port_idx ON {t} (dest_port)", f"{t}_dest_port_idx")
         run(
             f"CREATE INDEX IF NOT EXISTS {t}_src_group_norm_idx ON {t} "
-            f"((COALESCE(NULLIF(src_group, ''), '{ng}')))"
+            f"((COALESCE(NULLIF(src_group, ''), '{ng}')))",
+            f"{t}_src_group_norm_idx",
         )
         run(
             f"CREATE INDEX IF NOT EXISTS {t}_dest_group_norm_idx ON {t} "
-            f"((COALESCE(NULLIF(dest_group, ''), '{ng}')))"
+            f"((COALESCE(NULLIF(dest_group, ''), '{ng}')))",
+            f"{t}_dest_group_norm_idx",
         )
         run(
             f"CREATE INDEX IF NOT EXISTS {t}_protocol_upper_idx ON {t} "
-            f"((UPPER(COALESCE(protocol, ''))))"
+            f"((UPPER(COALESCE(protocol, ''))))",
+            f"{t}_protocol_upper_idx",
         )
         run(
             f"CREATE INDEX IF NOT EXISTS {t}_result_lower_idx ON {t} "
-            f"((LOWER(COALESCE(result, ''))))"
+            f"((LOWER(COALESCE(result, ''))))",
+            f"{t}_result_lower_idx",
         )
+        return ok
 
     def _flow_upsert_sql_and_values(
         self,
